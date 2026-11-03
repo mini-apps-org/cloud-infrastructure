@@ -1,0 +1,41 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: auth-service
+  namespace: auth
+  annotations:
+    # Provisioned outside the cluster, so it costs 0m of node CPU -- the node is
+    # at 926m/940m requested, where an in-cluster controller cannot schedule.
+    # Deprecated upstream, and still the ONLY way to select a GKE Ingress:
+    # ingress-gce ignores spec.ingressClassName outright ("Any value. This field
+    # is ignored" -- GKE Ingress docs). kubectl's warning is safe to ignore.
+    kubernetes.io/ingress.class: "gce"
+
+    # Must be a reserved GLOBAL address; regional ones are rejected. Unlike the
+    kubernetes.io/ingress.global-static-ip-name: "auth-service-ip"
+
+    # Cloudflare in Full (strict) only ever dials 443, so port 80 has no
+    # legitimate caller. Closing it drops a forwarding rule and gives the app's
+    # HSTS header something to enforce.
+    kubernetes.io/ingress.allow-http: "false"
+spec:
+  tls:
+    # A Cloudflare Origin CA cert: trusted only by Cloudflare, which is the only
+    # client of this LB. Created imperatively so the key stays out of git, the
+    # same rule auth-service-secrets follows.
+    - secretName: auth-service-origin-tls
+      hosts:
+        - auth.vincentn.dev
+  rules:
+    # Host-scoped on purpose: a request to the raw LB IP matches no rule and gets
+    # the default backend's 404.
+    - host: auth.vincentn.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: auth-service
+                port:
+                  name: http

@@ -1,5 +1,12 @@
 # Phase 2 — Domain, TLS, and working Google login
 
+> **Superseded by [phase-2-ingress-cloudflare.md](./phase-2-ingress-cloudflare.md).**
+> `vincentn.dev` is on Cloudflare with the proxy enabled, so the domain resolves to the
+> Cloudflare edge rather than to Google. The `ManagedCertificate` in §2.5 validates by
+> requiring the domain to resolve to its own load balancer, so it can never issue in that
+> setup — it reports `FailedNotVisible`. Follow the Cloudflare document instead. The OAuth
+> code analysis in §2.1 and the Google console steps in §2.7 remain accurate.
+
 **Goal:** `auth-service` on HTTPS at a real hostname, with Google sign-in completing end to end.
 
 **Blocked on you:** a hostname. Google **rejects raw IP addresses as OAuth redirect URIs**, so

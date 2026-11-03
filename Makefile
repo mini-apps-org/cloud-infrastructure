@@ -65,7 +65,17 @@ logs-proxy: ## Tail the cloud-sql-proxy sidecar
 events: ## Pod events -- read this first on a failure
 	@$(KNS) describe pod -l app=$(DEPLOY) | sed -n '/^Events/,$$p'
 
+# auth-service is ClusterIP behind the Ingress, so it has no LoadBalancer IP to
+# read. recommendations still has one and falls through to it.
+HEALTH_URL_auth := https://auth.vincentn.dev
+HEALTH_URL ?= $(HEALTH_URL_$(SVC))
+
 .PHONY: health
-health: ## curl /api/v1/health via the LoadBalancer
-	@ip=$$($(KNS) get svc $(DEPLOY) -o jsonpath='{.status.loadBalancer.ingress[0].ip}'); \
-	curl -fsS "http://$$ip/api/v1/health"; printf '\n'
+health: ## curl /api/v1/health (HEALTH_URL, else the LoadBalancer IP)
+	@base='$(HEALTH_URL)'; \
+	if [ -z "$$base" ]; then \
+	  ip=$$($(KNS) get svc $(DEPLOY) -o jsonpath='{.status.loadBalancer.ingress[0].ip}'); \
+	  [ -n "$$ip" ] || { echo "no LoadBalancer IP and no HEALTH_URL for SVC=$(SVC)" >&2; exit 1; }; \
+	  base="http://$$ip"; \
+	fi; \
+	curl -fsS "$$base/api/v1/health"; printf '\n'

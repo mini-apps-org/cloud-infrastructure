@@ -9,6 +9,7 @@ resources:
   - configmap.yaml
   - deployment.yaml
   - service.yaml
+  - ingress.yaml
 
 # auth-service-secrets is deliberately NOT here. It is created imperatively with
 # `kubectl create secret` (see docs/auth-service/deploy.md) so that no credential ever

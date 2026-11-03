@@ -19,10 +19,19 @@ data:
   DB_NAME: "recommendations-backend"
   DB_SSLMODE: "disable"
 
-  # Phase 1 placeholders. Phase 2 replaces both with the real https:// hostname.
-  # FRONTEND_URL does double duty: post-login redirect target AND the single
-  # allowed CORS origin (main.go).
-  BASE_URL: "http://localhost:9999"
+  # Cloudflare's edge, not the load balancer: the app only uses this to build
+  # URLs it hands a browser, so it must be what the browser can reach.
+  BASE_URL: "https://auth.vincentn.dev"
+
+  # Must match the registered Authorized redirect URI byte for byte. NOTE: the
+  # 0.1.1 image ignores this -- config.go overrides BASE_URL and FRONTEND_URL but
+  # not this, so the embedded localhost value still wins. See
+  # docs/auth-service/phase-2-ingress-cloudflare.md step 9a.
+  GOOGLE_OAUTH_REDIRECT_URL: "https://auth.vincentn.dev/api/v1/auth/google/callback"
+
+  # TODO: the real SPA origin, before login is usable. Doubles as post-login
+  # redirect target AND the only allowed CORS origin (main.go), so a wrong value
+  # breaks login and every XHR at once -- the latter only in the browser console.
   FRONTEND_URL: "http://localhost:5173"
 
   SESSION_TTL: "12h"

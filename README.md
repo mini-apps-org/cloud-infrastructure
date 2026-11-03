@@ -41,7 +41,8 @@ Two things about this service surprise people:
 | --- | --- |
 | **[prerequisites.md](docs/auth-service/prerequisites.md)** | Everything that must be true before an apply, **and every parameter** — each with its verified live value and the one command that checks it. Start here. |
 | **[deploy.md](docs/auth-service/deploy.md)** | The linear step-by-step deploy, plus the routine redeploy / new-image / rollback paths. |
-| [phase-2-domain-tls-oauth.md](docs/auth-service/phase-2-domain-tls-oauth.md) | HTTPS on a real hostname and working Google login. Needs **a domain name**, a code change, and a `0.0.2` image. |
+| **[phase-2-ingress-cloudflare.md](docs/auth-service/phase-2-ingress-cloudflare.md)** | `auth.vincentn.dev` on HTTPS: GCE Ingress + Cloudflare Origin certificate + Full (strict). The current plan. Also records the two code blockers that still stop Google login. |
+| [phase-2-domain-tls-oauth.md](docs/auth-service/phase-2-domain-tls-oauth.md) | **Superseded** by the above. Assumed DNS resolved straight to Google, which makes its `ManagedCertificate` step unusable behind Cloudflare's proxy. |
 | [troubleshooting.md](docs/auth-service/troubleshooting.md) | Organised by the error you are actually looking at. |
 | [manifest-reference.md](docs/auth-service/manifest-reference.md) | Field-by-field rationale for `k8s/auth-service/`. |
 | [parameters.md](docs/auth-service/parameters.md) | Every parameter linked to the upstream Kubernetes or Google Cloud doc that defines it. |

@@ -3,10 +3,16 @@ kind: Service
 metadata:
   name: auth-service
   namespace: auth
+  annotations:
+    # Container-native LB: the Ingress gets a NEG of pod IPs and reaches pods
+    # directly, so its health check inherits the readinessProbe. Already the
+    # default on a VPC-native cluster; stated because the Ingress relies on it.
+    cloud.google.com/neg: '{"ingress": true}'
 spec:
-  # Phase 1 only. Phase 2 switches this to NodePort and puts a GKE Ingress with
-  # a managed certificate in front, because Google OAuth needs a real hostname.
-  type: LoadBalancer
+  # The GCE Ingress owns the public address now. A LoadBalancer here would bill a
+  # second one on an address nothing resolves to, and ClusterIP is enough because
+  # container-native LB never uses a node port.
+  type: ClusterIP
   selector:
     app: auth-service
   ports:
