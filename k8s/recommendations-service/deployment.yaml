@@ -79,7 +79,7 @@ spec:
 
       containers:
         - name: recommendations-service
-          image: asia-southeast1-docker.pkg.dev/vincent-mini-apps-project/recommendations-repository/recommendations-service:0.0.1@sha256:33346e43942262776839baf60e837c4d6bd265b50d12197091eba3e163c21ae1
+          image: asia-southeast1-docker.pkg.dev/vincent-mini-apps-project/recommendations-repository/recommendations-service:0.1.2@sha256:fcac935dcfd25d653663b7dbbfd10fb32cbd51d961ebac4e26a24d41cf721203
           imagePullPolicy: IfNotPresent
           ports:
             - name: http

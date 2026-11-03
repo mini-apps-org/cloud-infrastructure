@@ -84,7 +84,7 @@ spec:
         - name: auth-service
           # Pinned by digest, not just tag: a tag can be moved, and a moved tag
           # makes `kubectl rollout undo` meaningless.
-          image: asia-southeast1-docker.pkg.dev/vincent-mini-apps-project/auth-repository/auth-service:0.1.1@sha256:e5f42855577990acbd14629410f72040387dd51dd955227299991152b88e5894
+          image: asia-southeast1-docker.pkg.dev/vincent-mini-apps-project/auth-repository/auth-service:0.1.2@sha256:3d8abe728c7de3e69400ea7695c8ddc2ac49ff15d319fed3942287af8f947f9c
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
