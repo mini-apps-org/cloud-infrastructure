@@ -15,5 +15,11 @@ data:
   DB_USER: "postgres"
   DB_NAME: "recommendations-backend"
   DB_SSLMODE: "disable"
-  BASE_URL: "http://localhost:9998"
+  # Cloudflare's edge, not the load balancer: the app only uses this to build
+  # URLs it hands a browser, so it must be what the browser can reach.
+  BASE_URL: "https://recommendations.vincentn.dev"
+
+  # TODO: the real SPA origin. This is the ONLY allowed CORS origin
+  # (middleware/cors.go, with AllowCredentials: true), so a wrong value breaks
+  # every browser XHR -- visible only in the browser console, never in the logs.
   FRONTEND_URL: "http://localhost:5173"

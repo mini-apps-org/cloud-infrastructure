@@ -9,6 +9,7 @@ resources:
   - configmap.yaml
   - deployment.yaml
   - service.yaml
+  - ingress.yaml
 
 # recommendations-service-secrets is deliberately NOT here. It is created
 # imperatively (docs/recommendations-service/deploy.md step 5) so that no

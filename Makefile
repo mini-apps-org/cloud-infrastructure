@@ -65,9 +65,11 @@ logs-proxy: ## Tail the cloud-sql-proxy sidecar
 events: ## Pod events -- read this first on a failure
 	@$(KNS) describe pod -l app=$(DEPLOY) | sed -n '/^Events/,$$p'
 
-# auth-service is ClusterIP behind the Ingress, so it has no LoadBalancer IP to
-# read. recommendations still has one and falls through to it.
-HEALTH_URL_auth := https://auth.vincentn.dev
+# Both services are ClusterIP behind their own Ingress now, so there is no
+# LoadBalancer IP to read. The fallback below stays for any service that still
+# has one.
+HEALTH_URL_auth            := https://auth.vincentn.dev
+HEALTH_URL_recommendations := https://recommendations.vincentn.dev
 HEALTH_URL ?= $(HEALTH_URL_$(SVC))
 
 .PHONY: health

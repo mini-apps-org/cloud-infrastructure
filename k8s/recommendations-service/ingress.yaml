@@ -1,0 +1,41 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: recommendations-service
+  namespace: recommendations
+  annotations:
+    # Deprecated upstream, and still the ONLY way to select a GKE Ingress:
+    # ingress-gce ignores spec.ingressClassName outright ("Any value. This field
+    # is ignored" -- GKE Ingress docs). kubectl's warning is safe to ignore.
+    kubernetes.io/ingress.class: "gce"
+
+    # Its own global address. A second Ingress cannot share auth-service-ip: a
+    # global address backs exactly one forwarding rule. Sharing one load balancer
+    # across namespaces needs the Gateway API, which this cluster does not have.
+    kubernetes.io/ingress.global-static-ip-name: "recommendations-service-ip"
+
+    # Cloudflare in Full (strict) only ever dials 443. Requires "Always Use
+    # HTTPS" on the zone, or plaintext requests reach a port with no forwarding
+    # rule and Cloudflare reports 520 instead of redirecting.
+    kubernetes.io/ingress.allow-http: "false"
+spec:
+  tls:
+    # The same Cloudflare Origin certificate as auth-service -- it is issued for
+    # *.vincentn.dev, so it covers this host too. Secrets are namespaced, so it
+    # is a copy, not a reference. Created imperatively; never in git.
+    - secretName: recommendations-service-origin-tls
+      hosts:
+        - recommendations.vincentn.dev
+  rules:
+    # Host-scoped: a request to the raw LB IP matches no rule and gets the
+    # default backend's 404.
+    - host: recommendations.vincentn.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: recommendations-service
+                port:
+                  name: http
