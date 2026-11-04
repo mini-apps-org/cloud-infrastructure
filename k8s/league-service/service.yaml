@@ -1,0 +1,23 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: league-service
+  namespace: league
+  annotations:
+    # Container-native LB: the Ingress gets a NEG of pod IPs and reaches pods
+    # directly, so its health check inherits the readinessProbe. Already the
+    # default on a VPC-native cluster; stated because the Ingress relies on it.
+    cloud.google.com/neg: '{"ingress": true}'
+spec:
+  # The GCE Ingress owns the public address. A LoadBalancer here would bill a
+  # second one on an address nothing resolves to, and ClusterIP is enough because
+  # container-native LB never uses a node port.
+  type: ClusterIP
+  selector:
+    app: league-service
+  ports:
+    - name: http
+      port: 80
+      # By name: changing the container port needs no edit here.
+      targetPort: http
+      protocol: TCP

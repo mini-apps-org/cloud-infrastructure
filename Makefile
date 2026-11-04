@@ -1,8 +1,10 @@
 # Deploy helpers for the k8s manifests in this repo.
-# Images are built in the service repos (../recommendations-be, ../auth-be).
+# Images are built in the service repos (../recommendations-be, ../auth-be,
+# ../../league/league-be).
 #
 #   make apply              # recommendations
 #   make apply SVC=auth     # auth-service
+#   make apply SVC=league   # league-service
 
 SVC ?= recommendations
 
@@ -12,7 +14,7 @@ DIR    := k8s/$(SVC)-service
 KNS    := kubectl -n $(NS)
 
 ifeq ($(wildcard $(DIR)/kustomization.yaml),)
-  $(error unknown SVC "$(SVC)" -- try recommendations or auth)
+  $(error unknown SVC "$(SVC)" -- try recommendations, auth or league)
 endif
 
 .DEFAULT_GOAL := help
@@ -65,11 +67,12 @@ logs-proxy: ## Tail the cloud-sql-proxy sidecar
 events: ## Pod events -- read this first on a failure
 	@$(KNS) describe pod -l app=$(DEPLOY) | sed -n '/^Events/,$$p'
 
-# Both services are ClusterIP behind their own Ingress now, so there is no
+# All three services are ClusterIP behind their own Ingress now, so there is no
 # LoadBalancer IP to read. The fallback below stays for any service that still
 # has one.
 HEALTH_URL_auth            := https://auth.vincentn.dev
 HEALTH_URL_recommendations := https://recommendations-be.vincentn.dev
+HEALTH_URL_league          := https://mvip-league-be.dev
 HEALTH_URL ?= $(HEALTH_URL_$(SVC))
 
 .PHONY: health

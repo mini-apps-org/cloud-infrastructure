@@ -1,0 +1,57 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: league-service-config
+  namespace: league
+data:
+  APP_ENV: "production"
+
+  # Wins over server.port in the embedded production.yaml, which says 5001
+  # (config.go reads PORT last). 9200 is what league-be's own .env and the
+  # Dockerfile's EXPOSE use, so the manifest keeps the app's own number.
+  PORT: "9200"
+
+  # 127.0.0.1 is the cloud-sql-proxy sidecar, not Cloud SQL. sslmode=disable is
+  # correct and not a weakening: this hop is loopback inside the pod, and the
+  # proxy makes the TLS connection to Cloud SQL itself.
+  DB_HOST: "127.0.0.1"
+  DB_PORT: "5432"
+  DB_USER: "postgres"
+  DB_SSLMODE: "disable"
+
+  # TODO: no database named "league" exists on recommendations-app-instance yet.
+  # Create it, or point this at an existing one, before the first apply.
+  DB_NAME: "league"
+
+  # DATABASE_URL is deliberately absent. config.go assigns it unconditionally and
+  # ConnectDatabaseString() PREFERS it over every DB_* value, so defining it here
+  # -- even blank-looking -- would silently bypass the proxy DSN above.
+
+  # Cloudflare's edge, not the load balancer: the app only uses this to build
+  # URLs it hands a browser, so it must be what the browser can reach.
+  BASE_URL: "https://mvip-league-be.dev"
+
+  # TODO: the real SPA origin (league-fe). Doubles as post-login redirect target
+  # AND the only allowed CORS origin (middleware/cors.go), so a wrong value
+  # breaks login and every browser XHR at once -- the latter visible only in the
+  # browser console, never in the logs.
+  FRONTEND_URL: "http://localhost:5173"
+
+  # Reported verbatim by GET /api/v1/health as "image", so a curl says which
+  # build is live. Keep in lockstep with the image tag in deployment.yaml --
+  # nothing enforces that they agree.
+  ENV_IMAGE: "0.1.0"
+
+  SESSION_TTL: "12h"
+  SESSION_IDLE_TTL: "30m"
+
+  # Empty means any Google account may log in. Set a Workspace domain to restrict.
+  GOOGLE_ALLOWED_HD: ""
+
+  ENCRYPTION_KEY_VERSION: "1"
+
+  # GOOGLE_OAUTH_REDIRECT_URL is NOT settable here. config.go reads
+  # auth.google_oauth_redirect_url only from the embedded production.yaml via
+  # mapstructure, with no environment override, and Load() fails when it is
+  # empty. production.yaml currently ships localhost:9999, so making login work
+  # needs a code change plus a rebuild -- not a ConfigMap edit.

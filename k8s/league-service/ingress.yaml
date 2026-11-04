@@ -1,0 +1,47 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: league-service
+  namespace: league
+  annotations:
+    # Deprecated upstream, and still the ONLY way to select a GKE Ingress:
+    # ingress-gce ignores spec.ingressClassName outright ("Any value. This field
+    # is ignored" -- GKE Ingress docs). kubectl's warning is safe to ignore.
+    kubernetes.io/ingress.class: "gce"
+
+    # Its own reserved GLOBAL address; regional ones are rejected. It cannot
+    # share auth-service-ip or recommendations-service-ip -- a global address
+    # backs exactly one forwarding rule. Sharing one load balancer across
+    # namespaces needs the Gateway API, which this cluster does not have.
+    #
+    # TODO: reserve this address before the first apply, or the Ingress stays
+    # without an IP indefinitely:
+    #   gcloud compute addresses create league-service-ip --global
+    kubernetes.io/ingress.global-static-ip-name: "league-service-ip"
+
+    # Cloudflare in Full (strict) only ever dials 443. Requires "Always Use
+    # HTTPS" on the zone, or plaintext requests reach a port with no forwarding
+    # rule and Cloudflare reports 520 instead of redirecting.
+    kubernetes.io/ingress.allow-http: "false"
+spec:
+  tls:
+    # The same Cloudflare Origin certificate as the other two services -- it is
+    # issued for *.vincentn.dev, so it covers this host too. Secrets are
+    # namespaced, so this is a copy, not a reference. Created imperatively;
+    # never in git.
+    - secretName: league-service-origin-tls
+      hosts:
+        - mvip-league-be.dev
+  rules:
+    # Host-scoped: a request to the raw LB IP matches no rule and gets the
+    # default backend's 404.
+    - host: mvip-league-be.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: league-service
+                port:
+                  name: http
