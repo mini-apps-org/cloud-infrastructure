@@ -23,10 +23,12 @@ data:
   # URLs it hands a browser, so it must be what the browser can reach.
   BASE_URL: "https://auth.vincentn.dev"
 
-  # Must match the registered Authorized redirect URI byte for byte. NOTE: the
-  # 0.1.1 image ignores this -- config.go overrides BASE_URL and FRONTEND_URL but
-  # not this, so the embedded localhost value still wins. See
-  # docs/auth-service/phase-2-ingress-cloudflare.md step 9a.
+  # IGNORED BY THE APP, kept only so this file documents the value. config.go
+  # reads auth.google_oauth_redirect_url from the //go:embed-ed production.yaml
+  # via mapstructure and has no environment override, so editing this key has no
+  # effect. auth-be now ships this exact URL in production.yaml, so the embedded
+  # value is correct -- it must match the registered Authorized redirect URI byte
+  # for byte. See docs/auth-service/prerequisites.md#open-issues.
   GOOGLE_OAUTH_REDIRECT_URL: "https://auth.vincentn.dev/api/v1/auth/google/callback"
 
   # TODO: the real SPA origin, before login is usable. Doubles as post-login

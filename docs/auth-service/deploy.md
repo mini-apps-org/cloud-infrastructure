@@ -1,33 +1,28 @@
 # Deploying `auth-service` — step by step
 
-One linear path from an empty cluster to a pod serving `GET /api/v1/health` over a public IP.
+One linear path from an empty cluster to a pod serving `GET /api/v1/health`. The public HTTPS
+host in front of it is [edge-architecture.md](../edge-architecture.md).
 
 Steps 1 and 3 are **one-time setup and already done** — they are kept here so the path is
 complete and reproducible, each reduced to its verify command. Steps 2, 4 and 5 are what you
 actually run.
 
 **Prerequisites and every parameter:** [prerequisites.md](./prerequisites.md).
-**When something breaks:** [troubleshooting.md](./troubleshooting.md).
+**When something breaks:** [troubleshooting.md](../troubleshooting.md).
 
 | | |
 | --- | --- |
-| **Goal** | `2/2 Running`, `database connected`, health 200 on `34.87.12.86` |
+| **Goal** | `2/2 Running`, `database connected`, health 200 |
 | **Time** | ~10 min from here (step 2 is most of it) |
-| **Image** | the published `0.0.1` — no rebuild in this phase |
+| **Image** | whatever digest `deployment.yaml` pins (currently `0.1.2`) |
 | **Destructive** | no, as long as you skip step 1 (it recreates the node pool) |
 
-> ### Why login does not work yet, and why that is fine
-> The `0.0.1` image has the OAuth callback URL compiled in as `http://localhost:9999/...` —
-> `production.yaml` is loaded via `//go:embed`, and `config.go` overrides `BASE_URL` and
-> `FRONTEND_URL` from the environment but **not** the redirect URL. So login needs a code change
-> and a rebuild.
->
-> Health and database connectivity do not. `config.Load()` only checks that the redirect value
-> is non-empty, and it is never consulted until a callback actually arrives. Splitting here
-> means this deploy validates Workload Identity, the Cloud SQL proxy, secrets, probes and
-> networking against an image you already have — so when login is the only thing left, login is
-> the only thing that can be wrong. That is
-> [Phase 2](./phase-2-domain-tls-oauth.md).
+> ### This deploy does not prove login works
+> `config.Load()` only checks the OAuth redirect value is non-empty, and nothing consults it
+> until a callback actually arrives. So a `2/2 Running` pod with a green health check says
+> Workload Identity, the Cloud SQL proxy, secrets, probes and networking are all correct — and
+> nothing at all about Google login. One blocker there is still open; see
+> [prerequisites.md § Open issues](./prerequisites.md#open-issues).
 
 ---
 
@@ -43,7 +38,7 @@ kubectl get nodes                 # one Ready node
 ```
 
 If `kubectl` returns `Forbidden`, the account is wrong — not the context. See
-[troubleshooting.md](./troubleshooting.md).
+[troubleshooting.md](../troubleshooting.md).
 
 ---
 
@@ -274,7 +269,8 @@ kubectl -n auth rollout restart deploy/auth-service
 | `service-account.yml` | KSA `auth-service`, annotated with the `auth-sql` GSA — the Workload Identity link |
 | `configmap.yaml` | non-secret env: `APP_ENV`, `PORT=9999`, `DB_*`, URLs, session TTLs |
 | `deployment.yaml` | app container + `cloud-sql-proxy` **native sidecar** |
-| `service.yaml` | `LoadBalancer` :80 → :9999 (by port name `http`) |
+| `service.yaml` | `ClusterIP` :80 → :9999 (by port name `http`), NEG-annotated |
+| `ingress.yaml` | `gce` Ingress: `auth.vincentn.dev`, global static IP, Origin CA TLS |
 
 Four parameters in `deployment.yaml` each prevent a specific, already-observed failure:
 
@@ -357,10 +353,13 @@ kubectl -n auth get endpointslice -l kubernetes.io/service-name=auth-service \
 ```
 
 ```bash
-# 5. end to end
-IP=$(kubectl -n auth get svc auth-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-curl -s "http://$IP/api/v1/health"
-# => {"ok":true,"env":"production"}
+# 5. end to end, without involving the load balancer
+kubectl -n auth port-forward deploy/auth-service 8080:9999 &
+curl -s localhost:8080/api/v1/health      # => {"ok":true,"env":"production"}
+kill %1
+
+# through the public host (see edge-architecture.md)
+make health SVC=auth
 ```
 
 `env:"production"` confirms `APP_ENV` selected the embedded `production.yaml` rather than the
@@ -439,12 +438,11 @@ whatever that tag points at today and mean nothing.
 - [ ] Proxy logs show `ready for new connections`, with no `SIGTERM` after it
 - [ ] App logs show `database connected` and `listening on :9999`
 - [ ] EndpointSlice for `auth-service` is non-empty
-- [ ] `curl http://$IP/api/v1/health` → `{"ok":true,"env":"production"}`
+- [ ] `make health SVC=auth` → `{"ok":true,"env":"production"}`
 - [ ] Pod identity is `auth-sql@…`, not the compute default
 - [ ] One real database-touching endpoint exercised
 
-Something failed → [troubleshooting.md](./troubleshooting.md), organised by the error in front
+Something failed → [troubleshooting.md](../troubleshooting.md), organised by the error in front
 of you.
 
-→ Next: [Phase 2 — domain, TLS, working Google login](./phase-2-domain-tls-oauth.md). Needs a
-domain name from you, a code change, and a `0.0.2` image.
+→ The public HTTPS host, Cloudflare and TLS: [edge-architecture.md](../edge-architecture.md).

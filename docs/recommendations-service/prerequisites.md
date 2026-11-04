@@ -9,7 +9,7 @@ is still open, it says so.
 
 **Verified:** 2026-10-30 against `vincent-mini-apps-project` / `vincent-cluster`.
 **Step-by-step deploy:** [deploy.md](./deploy.md). **When it breaks:**
-[troubleshooting.md](./troubleshooting.md). Field-by-field rationale for every manifest is §7
+[troubleshooting.md](../troubleshooting.md). Field-by-field rationale for every manifest is §7
 below.
 
 Source repository: `../recommendations-be` (module
@@ -24,19 +24,20 @@ Source repository: `../recommendations-be` (module
 | 1 | Local tooling (`gcloud`, `kubectl`, `docker`, auth plugin) | ✅ verified |
 | 2 | Project APIs enabled | ✅ verified |
 | 3 | Cluster reachable, node `Ready` | ✅ verified |
-| 4 | **Node CPU budget fits the pod** | ❌ **BLOCKER — 89m free, pod needs 150m. §3.2** |
-| 5 | Cluster-level Workload Identity (pool + `GKE_METADATA`) | ✅ already done for auth-service |
-| 6 | **GSA `recommendations-sql` + both IAM bindings** | ❌ **does not exist yet. §4** |
+| 4 | Node CPU budget fits the pod | ⚠️ **full** — 926m of 940m requested. §3.2 |
+| 5 | Cluster-level Workload Identity (pool + `GKE_METADATA`) | ✅ verified |
+| 6 | GSA `recommendations-sql` + both IAM bindings | ✅ exists |
 | 7 | Cloud SQL instance reachable by the proxy | ✅ verified |
-| 8 | **Artifact Registry repo `recommendations-repository`** | ❌ **does not exist yet. §5** |
-| 9 | **A pushed `recommendations-service` image** | ❌ **none exists. §5** |
-| 10 | Namespace `recommendations` | ❌ created by `kustomization.yaml` |
-| 11 | **Secret `recommendations-service-secrets`, all four keys** | ❌ **does not exist yet. §6.1** |
+| 8 | Artifact Registry repo `recommendations-repository` | ✅ exists |
+| 9 | A pushed `recommendations-service` image | ✅ `0.1.2`, digest-pinned |
+| 10 | Namespace `recommendations` | ✅ exists |
+| 11 | Secret `recommendations-service-secrets`, all four keys | ✅ exists |
 | 12 | **`gm_places` exists in the database `DB_NAME` points at** | ⚠️ **unverified. §6.2** |
+| 13 | **`FRONTEND_URL` set to the real SPA origin** | ❌ **still `localhost:5173`** |
 
-Unlike auth-service, this is a **first** deployment: items 6, 8, 9 and 11 are genuinely new work,
-and item 4 is a hard blocker that no manifest change can route around. Items 1, 2, 3, 5 and 7 are
-inherited from the auth-service bring-up and need nothing.
+The service is **live and `2/2 Running`** on `https://recommendations-be.vincentn.dev`. Items 12
+and 13 are what remain: a green health check proves nothing about the schema (§6.2), and
+`FRONTEND_URL` is the only allowed CORS origin, so every browser XHR fails until it is right.
 
 ---
 
@@ -97,7 +98,7 @@ The version matters for one reason: **native sidecars** (`initContainers` with
 ### 3.2 Blocker: the node has no room for this pod
 
 This is the one prerequisite that will stop the deploy dead, and it is not a tuning question.
-Measured requests on the single node right now:
+Measured requests on the single node:
 
 | | CPU requests |
 | --- | --- |
@@ -105,39 +106,34 @@ Measured requests on the single node right now:
 | DaemonSets + `kube-proxy` (per-node, unavoidable) | 386m |
 | kube-dns, kube-state-metrics, metrics-server, gmp, konnectivity, … | 315m |
 | `auth-service` pod (100m app + 50m proxy) | 150m |
-| **Total already requested** | **851m (90%)** |
-| **Free** | **89m** |
-| `recommendations-service` needs (100m app + 50m proxy) | **150m** |
-| Shortfall | **−61m** |
+| `recommendations-service` pod (50m app + 25m proxy) | 75m |
+| **Total requested** | **926m (98%)** |
+| **Free** | **14m** |
 
 ```bash
 kubectl describe node -l cloud.google.com/gke-nodepool=minimal-pool \
   | sed -n '/Allocated resources/,/^Events/p'
-# cpu  851m (90%)
+# cpu  926m (98%)
 ```
 
-Applying the manifests as they stand produces a pod stuck `Pending` with
-`0/1 nodes are available: Insufficient cpu`, and — because autoscaling is off — no
-`TriggerScaleUp` to rescue it. The Deployment will report `0/1` forever and nothing in the logs
-will explain why, because the container never starts.
+**This pod only fits because its requests were shrunk** — 50m app + 25m proxy, against
+auth-service's 100m + 50m. That was the cheapest of three options and explicitly not the best
+one: it leaves the node at 98% reserved, and a Go HTTP server paging a large table on 50m will
+throttle. The alternatives, and why they are still the right answer eventually, are in
+[cpu-capacity-options.md](./cpu-capacity-options.md).
 
-Note that **requests**, not usage, decide this. The node is nowhere near 90% *busy*; the
-scheduler is refusing on a reservation ledger, so "but the CPU is idle" is true and irrelevant.
+Note that **requests**, not usage, decide scheduling. The node is nowhere near 98% *busy*; the
+scheduler refuses on a reservation ledger, so "but the CPU is idle" is true and irrelevant.
 
-Three ways out:
+Two consequences:
 
-| Option | Command | Verdict |
-| --- | --- | --- |
-| **A — add a second node** (recommended) | `gcloud container clusters resize vincent-cluster --node-pool minimal-pool --num-nodes 2 --zone asia-southeast1-a` | Non-destructive, ~2 min, keeps the existing `GKE_METADATA` pool config. A new e2-medium carries only the 386m of per-node DaemonSets, leaving **~554m free** — room for this pod and the next one. Doubles node cost (spot e2-medium, so small). |
-| **B — bigger machine type** | recreate the pool with `e2-standard-2` (1930m allocatable) | More headroom per rupiah than two e2-mediums, but a machine-type change **recreates the pool**, and the replacement must be given `--workload-metadata=GKE_METADATA` again or every Workload Identity pod breaks at once. Right answer eventually; wrong one to do mid-deploy. |
-| **C — shrink the requests** | `cpu: 50m` app + `25m` proxy = 75m | Fits in 89m. Also leaves the node at 99% reserved with two services' rollouts competing for nothing, and a Go HTTP server paging a 1M-row table on 50m will throttle. A measurement-free squeeze, not a fix. |
+- **Nothing else will schedule** — `league-service` is reserved config, not a running pod.
+- **No rollout can run two copies of a pod**, which is why both Deployments set
+  `maxUnavailable: 1` / `maxSurge: 0`. The usual `maxUnavailable: 0` deadlocks here.
 
-Take A. [deploy.md step 1](./deploy.md#step-1--make-room-on-the-cluster-blocker) runs it.
-
-> **Spot nodes:** preemption of a single node is a full outage for both services. Two nodes make
-> that a partial outage *only if* the pods land on different nodes, which nothing currently
-> guarantees. Worth revisiting with a `topologySpreadConstraint` once there is more than one
-> replica to spread.
+> **Spot nodes:** preemption of the single node is a full outage for both services. Adding a
+> second node makes that a partial outage *only if* the pods land on different nodes, which
+> nothing currently guarantees — worth a `topologySpreadConstraint` at that point.
 
 ---
 
@@ -453,15 +449,22 @@ flip side is §6.2 — a green probe says nothing about whether the table exists
 
 | Field | Value | Why |
 | --- | --- | --- |
-| `type` | `LoadBalancer` | Phase 1 only. This is the **second** LoadBalancer in the project — each is its own GCP forwarding rule and billed external IP, which is the argument for moving both services behind one shared GKE Ingress |
+| `type` | `ClusterIP` | The GCE Ingress owns the public address |
+| `cloud.google.com/neg` | `{"ingress": true}` | Container-native LB — the Ingress health check inherits the `readinessProbe` |
 | `selector` | `app: recommendations-service` | invariant 5 |
-| `port` | `80` | external |
+| `port` | `80` | in-cluster |
 | `targetPort` | `http` | invariant 4 — **by name**, which is why a container port change needs no edit here |
 
-For comparison, auth-service's LoadBalancer is on `34.87.12.86`. This service gets its own IP,
-assigned at create time.
+### 7.8 `ingress.yaml`
 
-### 7.8 `kustomization.yaml`
+Host `recommendations-be.vincentn.dev` on the reserved global address
+`recommendations-service-ip`, TLS from `recommendations-service-origin-tls` (a **copy** of the
+`*.vincentn.dev` Origin CA cert — Secrets are namespaced). This is a second, independent Ingress:
+an Ingress can only reference Services in its own namespace, and a global address backs exactly
+one forwarding rule, so neither the Ingress nor the IP can be shared with `auth`. Full reasoning
+in [edge-architecture.md](../edge-architecture.md).
+
+### 7.9 `kustomization.yaml`
 
 | Field | Value | Note |
 | --- | --- | --- |

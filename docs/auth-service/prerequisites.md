@@ -20,12 +20,13 @@ Where a value is still open, it says so.
 | 1 | Local tooling (`gcloud`, `kubectl`, auth plugin) | ✅ verified |
 | 2 | Project APIs enabled | ✅ verified |
 | 3 | Cluster reachable, one `Ready` node | ✅ verified |
-| 4 | Node CPU budget fits the pod | ⚠️ **tight** — 89m spare, see §3.2 |
+| 4 | Node CPU budget fits the pod | ⚠️ **full** — 926m of 940m requested, see §3.2 |
 | 5 | Workload Identity chain, all four links | ✅ verified |
 | 6 | Cloud SQL instance reachable by the proxy | ✅ verified |
 | 7 | Namespace `auth` | ✅ exists |
 | 8 | Secret `auth-service-secrets`, all four keys | ✅ exists |
 | 9 | **Auth schema migrated into the database `DB_NAME` points at** | ❌ **open — see §6.2** |
+| 10 | **Google login works end to end** | ❌ **open — see [Open issues](#open-issues)** |
 
 Items 1–8 need no action. Item 9 is the only prerequisite still outstanding, and it will not
 show up as a startup failure — the pod will go Ready and then fail at runtime on missing tables.
@@ -106,9 +107,10 @@ take most of it:
 | --- | --- |
 | `e2-medium` allocatable | **940m** |
 | GKE system pods (kube-dns, fluentbit, gke-metadata-server, kube-proxy, metrics-server, gmp, …) | **~701m** |
-| **Free for workloads** | **~239m** |
-| `auth-service` pod needs (100m app + 50m proxy) | **150m** |
-| Remaining headroom | **~89m** |
+| `auth-service` pod (100m app + 50m proxy) | **150m** |
+| `recommendations-service` pod (50m app + 25m proxy) | **75m** |
+| **Total requested** | **926m (98%)** |
+| **Free** | **14m** |
 
 ```bash
 kubectl describe node -l cloud.google.com/gke-nodepool=minimal-pool \
@@ -117,13 +119,15 @@ kubectl describe node -l cloud.google.com/gke-nodepool=minimal-pool \
 
 Two consequences that have already bitten this deployment:
 
-1. **No third workload will schedule.** 89m is not enough for anything meaningful.
+1. **No third workload will schedule.** 14m is not enough for anything — which is why
+   `league-service` is reserved config rather than a running pod
+   ([league-service/prerequisites.md](../league-service/prerequisites.md)).
 2. **A rollout cannot run two copies of the pod at once.** This is why
    `deployment.yaml` sets `maxUnavailable: 1` / `maxSurge: 0`. With the more usual
    `maxUnavailable: 0` / `maxSurge: 1`, the old pod cannot be removed until the new one is
    Ready, and the new one cannot be *scheduled* until the old one is removed — the rollout
    deadlocks with the new pod `Pending` on `Insufficient cpu` and the autoscaler reporting
-   `NotTriggerScaleUp`. See the [incident record](./phase-1-fix-blockers.md).
+   `NotTriggerScaleUp`. This is why `maxUnavailable: 1` / `maxSurge: 0` is mandatory here.
 
 Moving to `e2-standard-2` (1930m allocatable) ends this whole class of problem.
 
@@ -350,7 +354,7 @@ say `The proxy has started successfully`.
 
 | Field | Value | Why |
 | --- | --- | --- |
-| `image` | `…/auth-service:0.0.1@sha256:2e3283ac…` | **tag *and* digest.** The digest resolves; the tag documents. A moved tag makes `kubectl rollout undo` meaningless |
+| `image` | `…/auth-service:0.1.2@sha256:3d8abe72…` | **tag *and* digest.** The digest resolves; the tag documents. A moved tag makes `kubectl rollout undo` meaningless |
 | `imagePullPolicy` | `IfNotPresent` | correct *because* of the digest pin — a digest cannot change meaning, so re-pulling buys nothing |
 | `ports[].name` | `http` | invariant 4. Named so the Service and all three probes reference `http`, never a number — which is why changing the port is a one-line edit |
 | `ports[].containerPort` | `9999` | invariant 1. Informational only |
@@ -378,18 +382,31 @@ healthy pod. The flip side is §6.2: a green probe says nothing about whether th
 
 | Field | Value | Why |
 | --- | --- | --- |
-| `type` | `LoadBalancer` | Phase 1 only. Phase 2 switches to `NodePort` behind a GKE Ingress with a managed certificate, because Google OAuth needs a real hostname |
+| `type` | `ClusterIP` | The GCE Ingress owns the public address. A `LoadBalancer` here would bill a second one on an address nothing resolves to, and container-native LB never uses a node port |
+| `cloud.google.com/neg` | `{"ingress": true}` | Container-native LB — the Ingress gets a NEG of pod IPs and its health check inherits the `readinessProbe` |
 | `selector` | `app: auth-service` | invariant 5 |
-| `port` | `80` | external |
+| `port` | `80` | in-cluster |
 | `targetPort` | `http` | invariant 4 — **by name**, which is why a container port change needs no edit here |
-| Current external IP | `34.87.12.86` | `kubectl -n auth get svc auth-service` |
 
-### 7.8 `kustomization.yaml`
+### 7.8 `ingress.yaml`
+
+| Field | Value | Why |
+| --- | --- | --- |
+| `kubernetes.io/ingress.class` | `gce` | The only way to select a GKE Ingress; `spec.ingressClassName` is ignored outright |
+| `…/ingress.global-static-ip-name` | `auth-service-ip` | Must be **global**. Reserved outside the cluster, so it survives `kubectl delete ingress` |
+| `…/ingress.allow-http` | `false` | Cloudflare Full (strict) only dials 443 |
+| `spec.tls[].secretName` | `auth-service-origin-tls` | Cloudflare Origin CA cert for `*.vincentn.dev`, created imperatively |
+| `spec.rules[].host` | `auth.vincentn.dev` | Host-scoped: a request to the raw LB IP matches no rule and gets a 404 |
+
+Public address: `kubectl -n auth get ingress auth-service`. How the whole edge fits together is in
+[edge-architecture.md](../edge-architecture.md).
+
+### 7.9 `kustomization.yaml`
 
 | Field | Value | Note |
 | --- | --- | --- |
 | `namespace` | `auth` | applied to every resource |
-| `resources` | namespace, SA, configmap, deployment, service | **no Secret** — created imperatively |
+| `resources` | namespace, SA, configmap, deployment, service, ingress | **no Secret** — created imperatively |
 | `labels[].includeSelectors` | `false` | important: `true` would inject these labels into the immutable `selector.matchLabels`, making future label changes a Deployment-replacing operation |
 
 ---
@@ -431,3 +448,49 @@ kubectl kustomize k8s/auth-service | grep -E 'containerPort|targetPort|PORT:|max
 - [ ] All six invariants in §7.1 hold
 
 → Deploy: [deploy.md](./deploy.md)
+
+---
+
+## Open issues
+
+Two things are still open. Neither stops the pod from running and serving health.
+
+### The `__Host-oauth_tx` cookie is rejected by every browser
+
+`auth-be` sets the `oauth_tx` cookie with `Path=/api/v1/auth/google`
+(`internal/auth/handlers_cookie.go:21,84`) and prefixes cookie names with `__Host-` when
+`APP_ENV=production` (`cookieName`). The `__Host-` prefix requires **`Path=/` exactly**, plus
+`Secure` and no `Domain`. A `__Host-` cookie with any other path is discarded by the browser
+with no signal the server can observe.
+
+The symptom is specific: the login redirect appears to work, then the callback fails with *no
+`oauth_tx` cookie*. It was latent for a long time — locally `APP_ENV` is not `production`, so no
+prefix is applied.
+
+Two ways out, and they genuinely trade off:
+
+- **Set `Path: "/"` for `oauth_tx`** — keeps the `__Host-` subdomain-shadowing protection, loses
+  path scoping. The cookie is `HttpOnly` and sealed, and lives for `loginTxTTL` only.
+- **Exempt `oauth_tx` from the prefix** — keeps path scoping, loses the prefix guarantee.
+
+Prefer the first. `__Host-` defends against a sibling subdomain under `vincentn.dev` setting a
+cookie this service would read; path scoping only narrows which of *this* origin's own routes
+receive it, and every one of those is this same service. The comment on `OAuthTxCookiePath` and
+`TestOAuthTxCookiePathCoversRoutes` both encode the current intent, so a fix touches them too.
+
+**Fix lives in `auth-be`, not here** — it needs a code change and a new image.
+
+### `FRONTEND_URL` is still `http://localhost:5173`
+
+It is the post-login redirect target **and** the only allowed CORS origin (`main.go`), so a wrong
+value breaks login and every browser XHR at once — the latter visible only in the browser
+console, never in the logs. Set it to the real SPA origin before login is usable.
+
+### Resolved, for reference
+
+`GOOGLE_OAUTH_REDIRECT_URL` used to be unreachable: `config.go` overrides `BASE_URL` and
+`FRONTEND_URL` from the environment but not the redirect URL, so the `//go:embed`-ed localhost
+value won. `auth-be` now ships `https://auth.vincentn.dev/api/v1/auth/google/callback` in
+`production.yaml`, so the embedded value is correct. **The ConfigMap key is still ignored** — it
+is harmless, but do not expect edits to it to take effect. The GCP console's Authorized redirect
+URI must match that URL byte for byte.

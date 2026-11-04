@@ -49,24 +49,18 @@ the right column is what happens when they don't.
 `service.yaml` needs nothing: `targetPort: http` resolves by *name*, as do all three probes, so
 `containerPort` is the only numeric edit a port change requires.
 
-Invariant 2, separately:
+### ✅ Invariant 2 is satisfied: the proxy port is `5432`
 
-| Field | File | Now | Fix |
-| --- | --- | --- | --- |
-| `DB_PORT` | `configmap.yaml:17` | `5433` | → `5432`, **or** change the two proxy fields below to `5433` |
-| proxy `--port` | `deployment.yaml:43` | `5432` | must match `DB_PORT` |
-| proxy `startupProbe` | `deployment.yaml:62` | `5432` | must match `DB_PORT` |
+Three fields must agree and nothing enforces it — `DB_PORT` in `configmap.yaml`, the proxy's
+`--port`, and the proxy's `startupProbe`. All three are `5432`. The port is pod-internal loopback
+only, so there is no collision to avoid and no reason to change it.
 
-This port is pod-internal loopback only — nothing outside the pod sees it, so `5432` is fine and
-there is no collision to avoid. Simplest fix is reverting `DB_PORT` to `5432`.
+### ⚠️ Invariant 3 — still worth confirming
 
-Invariant 3 — **check this one is what you meant:**
-
-`DB_NAME` is now `recommendations-backend`, which is the *other* service's database. The auth
-migration (`db/migrations/00001_init.sql`) targets `auth_service` per
-[prerequisites.md §6.2](./prerequisites.md#62-open-the-auth-schema-has-nowhere-to-live-yet). Pointing auth-service at `recommendations-backend` puts the
-sessions and users tables inside the recommendations database. If you want one shared database,
-that works but migrate there deliberately; if not, revert to `auth_service`.
+`DB_NAME` is `recommendations-backend`, which is also the recommendations service's database, so
+the auth tables live inside it. That is workable as a shared database, but it has to be migrated
+there deliberately. Whether the auth schema actually exists there is the one open prerequisite —
+[prerequisites.md §6.2](./prerequisites.md#62-open-the-auth-schema-has-nowhere-to-live-yet).
 
 ---
 
@@ -123,7 +117,7 @@ The annotation alone does nothing. Two halves:
 With only half, the proxy silently gets a **node** identity token and Cloud SQL rejects it — and
 the error names the node SA, pointing you at the wrong account entirely. See
 [prerequisites.md §4](./prerequisites.md#4-the-workload-identity-chain) and the proxy table in
-[troubleshooting](./troubleshooting.md).
+[troubleshooting](../troubleshooting.md).
 
 > `automountServiceAccountToken` is left at its default (`true`). The app never calls the
 > Kubernetes API, so `false` would be marginally tighter — but the GKE metadata path the proxy
@@ -157,7 +151,7 @@ the Secret. A ConfigMap is plaintext to anyone with namespace read access.
 
 `GOOGLE_OAUTH_REDIRECT_URL` is absent because the current image cannot read it: that value is
 compiled in via `//go:embed` and `config.go` has no env override for it. Added in
-[Phase 2.1](./phase-2-domain-tls-oauth.md) along with the code change.
+[edge-architecture.md](../edge-architecture.md) along with the code change.
 
 ### One consequence of `envFrom`
 
@@ -234,7 +228,7 @@ changing resource name on every edit.)
 | `envFrom[0].configMapRef` | `auth-service-config` | Imports all ConfigMap keys as env vars. |
 | `envFrom[1].secretRef` | `auth-service-secrets` | Same for the Secret. **Must exist before the pod starts** — a missing Secret here leaves the pod in `CreateContainerConfigError`, not a crash loop. |
 | `securityContext` — no `runAsUser` | *(unset)* | **Deliberate.** The distroless `:nonroot` tag already sets numeric UID 65532, and the *numeric* form is what lets Kubernetes verify `runAsNonRoot`. Restating it as a name breaks the check — the Dockerfile says so too. |
-| `securityContext.readOnlyRootFilesystem` | `true` | Safe here: `main.go` logs to stderr via stdlib `log`, and the `logger.file_name` in `production.yaml` is vestigial — no logrus writer is wired up. If this ever bites, add an `emptyDir` rather than dropping the setting ([troubleshooting](./troubleshooting.md)). |
+| `securityContext.readOnlyRootFilesystem` | `true` | Safe here: `main.go` logs to stderr via stdlib `log`, and the `logger.file_name` in `production.yaml` is vestigial — no logrus writer is wired up. If this ever bites, add an `emptyDir` rather than dropping the setting ([troubleshooting](../troubleshooting.md)). |
 | `resources.requests` | `100m` / `128Mi` | Scheduling floor. Keep requests + the proxy's well under node allocatable, or the pod sits `Pending`. |
 | `resources.limits` | `500m` / `256Mi` | Go's GC targets available memory; 256Mi is comfortable for this service but worth watching under load. |
 
@@ -262,10 +256,11 @@ database** — a liveness probe that failed on one slow query would evict a heal
 | --- | --- | --- |
 | `kind` | `Service` | Stable virtual IP + DNS name in front of the pods. |
 | `metadata.name` | `auth-service` | Gives in-cluster DNS `auth-service.auth.svc.cluster.local`. |
-| `spec.type` | `LoadBalancer` | **Phase 1 only.** Provisions a GCP network load balancer with a public IP — enough to `curl` health. Phase 2 switches to `NodePort` behind a GKE Ingress, because Google OAuth needs a real hostname and TLS. Leaving it as `LoadBalancer` then would provision a second, billed, redundant load balancer. |
+| `spec.type` | `ClusterIP` | The GCE Ingress owns the public address. A `LoadBalancer` here would bill a second load balancer on an address nothing resolves to, and container-native LB never uses a node port, so a ClusterIP is sufficient. |
+| `cloud.google.com/neg` | `{"ingress": true}` | Container-native load balancing: the Ingress gets a NEG of pod IPs and reaches pods directly, so its health check **inherits the `readinessProbe`**. Already the default on a VPC-native cluster; stated because the Ingress depends on it. |
 | `spec.selector` | `app: auth-service` | Matches the **pod template** labels, not the Deployment's own. Mismatch = a Service with zero endpoints and no error anywhere — invariant 5. |
-| `ports[].name` | `http` | Named so the Phase 2 Ingress can reference `port.name: http`. |
-| `ports[].port` | `80` | The port on the load balancer. |
+| `ports[].name` | `http` | Named so `ingress.yaml` can reference `port.name: http`. |
+| `ports[].port` | `80` | The in-cluster port the Ingress targets. |
 | `ports[].targetPort` | `http` | The **container's port name**, not a number — so it follows `containerPort` automatically. This is why invariant 1 surfaces as a failing probe rather than a broken Service. |
 | `protocol` | `TCP` | Default; explicit for symmetry. |
 

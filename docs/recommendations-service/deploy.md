@@ -1,18 +1,18 @@
 # Deploying `recommendations-service` — step by step
 
 One linear path from nothing to a pod serving `GET /api/v1/health` and `GET /api/v1/places` over
-a public IP.
+a public HTTPS host — see [edge-architecture.md](../edge-architecture.md).
 
 Unlike auth-service, **nothing here is pre-done**. There is no GSA, no Artifact Registry repo, no
 image, no Secret — and the cluster has no room for the pod. Steps 1–5 are all first-time work.
 
 **Prerequisites and every parameter:** [prerequisites.md](./prerequisites.md).
-**When something breaks:** [troubleshooting.md](./troubleshooting.md).
+**When something breaks:** [troubleshooting.md](../troubleshooting.md).
 **Field-by-field manifest rationale:** [prerequisites.md §7](./prerequisites.md#7-every-deployment-parameter).
 
 | | |
 | --- | --- |
-| **Goal** | `2/2 Running`, `database connected`, health 200 and `/places` 200 on a new public IP |
+| **Goal** | `2/2 Running`, `database connected`, health 200 and `/places` 200 |
 | **Time** | ~25 min (step 1 ~2 min, step 4 ~5 min, the rest is fast) |
 | **Image** | built here — none exists yet |
 | **Destructive** | step 1 resizes the node pool (additive, non-destructive). Nothing else touches existing infrastructure |
@@ -43,41 +43,21 @@ If `kubectl` returns `Forbidden`, the account is wrong — not the context.
 
 ---
 
-## Step 1 — Make room on the cluster (blocker)
+## Step 1 — CPU budget ✅ resolved, nothing to run
 
-The node is at **851m of 940m** allocatable CPU (system pods + `auth-service`). This pod requests
-150m and only 89m is free, so applying the manifests first would just park a `Pending` pod on the
-cluster. Full numbers and the alternatives are in
-[prerequisites.md §3.2](./prerequisites.md#32-blocker-the-node-has-no-room-for-this-pod).
+This pod fits on the single node, but only because its requests were shrunk to **50m app + 25m
+proxy** (auth-service uses 100m + 50m). The node is now at **926m of 940m** requested — 98%.
 
 ```bash
-# confirm the shortfall for yourself
 kubectl describe node -l cloud.google.com/gke-nodepool=minimal-pool \
   | sed -n '/Allocated resources/,/^Events/p'
-# cpu  851m (90%)
+# cpu  926m (98%)
 ```
 
-Add a second node. Additive and non-destructive — the existing node and its pods are untouched,
-and the pool keeps its `GKE_METADATA` setting, which a machine-type change would not:
-
-```bash
-gcloud container clusters resize vincent-cluster \
-  --node-pool minimal-pool --num-nodes 2 \
-  --zone asia-southeast1-a
-```
-
-```bash
-# verify: two Ready nodes, and the new one has room
-kubectl get nodes
-kubectl describe nodes | sed -n '/Allocated resources/,/^Events/p'
-# the new node should show ~386m requested (DaemonSets + kube-proxy only)
-```
-
-A fresh `e2-medium` carries only the per-node DaemonSets, leaving **~554m free** — enough for
-this pod and the next one.
-
-> **Do not** instead drop the CPU requests to squeeze into 89m. It fits on paper and leaves the
-> node 99% reserved, with two services' rollouts competing for nothing.
+That was the cheapest of three options, not the best one: it leaves no room for anything else
+(which is why `league-service` cannot be deployed) and a Go HTTP server paging a large table on
+50m will throttle. Adding a second node, or moving to `e2-standard-2`, is still the real fix —
+[cpu-capacity-options.md](./cpu-capacity-options.md) has the commands and the tradeoffs.
 
 ---
 
@@ -329,7 +309,8 @@ kubectl -n recommendations rollout restart deploy/recommendations-service
 | `service-account.yml` | KSA `recommendations-service`, annotated with the `recommendations-sql` GSA — the Workload Identity link |
 | `configmap.yaml` | non-secret env: `APP_ENV`, `PORT=9998`, `DB_*`, URLs |
 | `deployment.yaml` | app container + `cloud-sql-proxy` **native sidecar** |
-| `service.yaml` | `LoadBalancer` :80 → :9998 (by port name `http`) |
+| `service.yaml` | `ClusterIP` :80 → :9998 (by port name `http`), NEG-annotated |
+| `ingress.yaml` | `gce` Ingress: `recommendations-be.vincentn.dev`, global static IP, Origin CA TLS |
 
 Five parameters each prevent a specific failure, four of them already observed on auth-service:
 
@@ -393,11 +374,13 @@ kubectl -n recommendations get endpointslice \
 ```
 
 ```bash
-# 5. end to end -- health
-IP=$(kubectl -n recommendations get svc recommendations-service \
-  -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-curl -s "http://$IP/api/v1/health"
-# => {"env":"production","image":""}
+# 5. end to end, without involving the load balancer
+kubectl -n recommendations port-forward deploy/recommendations-service 8080:9998 &
+curl -s localhost:8080/api/v1/health      # => {"env":"production","image":""}
+kill %1
+
+# through the public host (see edge-architecture.md)
+make health SVC=recommendations
 ```
 
 `env: "production"` confirms `APP_ENV` selected the embedded `production.yaml` rather than the
@@ -483,5 +466,5 @@ whatever that tag points at today and mean nothing.
 - [ ] Pod identity is `recommendations-sql@…`, not the compute default
 - [ ] **`curl http://$IP/api/v1/places?limit=1` returns rows** (step 8 check 7)
 
-Something failed → [troubleshooting.md](./troubleshooting.md), organised by the error in front of
+Something failed → [troubleshooting.md](../troubleshooting.md), organised by the error in front of
 you.
