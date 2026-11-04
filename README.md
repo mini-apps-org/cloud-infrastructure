@@ -2,71 +2,42 @@
 
 Kubernetes manifests and deployment runbooks for the `my-mini-apps` services on GKE.
 
-Covers two services:
+Covers three services:
 
 | Service | Source | Namespace | Manifests | Docs | State |
 | --- | --- | --- | --- | --- | --- |
 | **`auth-service`** | `../auth-be` | `auth` | `k8s/auth-service/` | [docs/](docs/auth-service/prerequisites.md) | live on `https://auth.vincentn.dev` (Cloudflare + GCE Ingress) |
 | **`recommendations-service`** | `../recommendations-be` | `recommendations` | `k8s/recommendations-service/` | [docs/recommendations-service/](docs/recommendations-service/prerequisites.md) | live on `https://recommendations-be.vincentn.dev` (Cloudflare + GCE Ingress), `2/2 Running` |
+| **`league-service`** | `../../league/league-be` | `league` | `k8s/league-service/` | [docs/league-service/](docs/league-service/prerequisites.md) | **reserved — not deployed.** Manifests complete and `kustomize`-valid; no GSA, registry repo, image, static IP or Secret exists yet, and the node has no CPU for the pod |
 
 ---
 
-## `recommendations-service` — start here
+## Docs
+
+Shared across all three services — read these first:
 
 | Document | What it is for |
 | --- | --- |
-| **[prerequisites.md](docs/recommendations-service/prerequisites.md)** | Everything that must be true before an apply, **and every parameter** with its verified live value and the command that checks it. §7 is the field-by-field manifest rationale. Start here. |
-| **[deploy.md](docs/recommendations-service/deploy.md)** | The linear step-by-step deploy — node resize, Artifact Registry, Workload Identity, image build, Secret, apply, layered verification — plus redeploy / new-image / rollback. |
-| **[phase-2-ingress-cloudflare.md](docs/recommendations-service/phase-2-ingress-cloudflare.md)** | `recommendations-be.vincentn.dev` on HTTPS behind Cloudflare. A **delta** doc — the shared reasoning lives in the auth-service runbook of the same name. |
-| [troubleshooting.md](docs/recommendations-service/troubleshooting.md) | Organised by the error you are actually looking at. |
+| **[gke-parameters.md](docs/gke-parameters.md)** | Every GKE parameter for all three services in one set of tables: cluster, identity, networking, resources, probes, sidecar, env. Start here. |
+| **[troubleshooting.md](docs/troubleshooting.md)** | Every failure mode, in the order a deploy hits them. Organised by the error in front of you. |
+| **[edge-architecture.md](docs/edge-architecture.md)** | How Cloudflare + GCE Ingress + TLS fit together, and how to put a new service behind the edge. |
 
-Nothing is pre-done for this service: no GSA, no registry repo, no image, no Secret. And one hard
-blocker comes first — the single `e2-medium` node has **89m CPU free** and the pod requests
-**150m**, so it cannot be scheduled until the node pool grows
-([prerequisites.md §3.2](docs/recommendations-service/prerequisites.md#32-blocker-the-node-has-no-room-for-this-pod)).
+Per service:
 
-Two things about this service surprise people:
-
-- It needs `GOOGLE_OAUTH_CLIENT_ID`, `GOOGLE_OAUTH_CLIENT_SECRET` and `ENCRYPTION_KEY` in its
-  Secret despite registering **no auth routes** — `config.Load()` validates them before anything
-  checks whether they are used.
-- A green `/api/v1/health` does **not** mean the database works. The handler never touches the
-  pool, and `recommendations-be` ships no migrations, so `GET /api/v1/places` is the only real
-  test.
-
----
-
-## `auth-service` docs
-
-| Document | What it is for |
+| Service | Documents |
 | --- | --- |
-| **[prerequisites.md](docs/auth-service/prerequisites.md)** | Everything that must be true before an apply, **and every parameter** — each with its verified live value and the one command that checks it. Start here. |
-| **[deploy.md](docs/auth-service/deploy.md)** | The linear step-by-step deploy, plus the routine redeploy / new-image / rollback paths. |
-| **[phase-2-ingress-cloudflare.md](docs/auth-service/phase-2-ingress-cloudflare.md)** | `auth.vincentn.dev` on HTTPS: GCE Ingress + Cloudflare Origin certificate + Full (strict). The current plan. Also records the two code blockers that still stop Google login. |
-| [phase-2-domain-tls-oauth.md](docs/auth-service/phase-2-domain-tls-oauth.md) | **Superseded** by the above. Assumed DNS resolved straight to Google, which makes its `ManagedCertificate` step unusable behind Cloudflare's proxy. |
-| [troubleshooting.md](docs/auth-service/troubleshooting.md) | Organised by the error you are actually looking at. |
-| [manifest-reference.md](docs/auth-service/manifest-reference.md) | Field-by-field rationale for `k8s/auth-service/`. |
-| [parameters.md](docs/auth-service/parameters.md) | Every parameter linked to the upstream Kubernetes or Google Cloud doc that defines it. |
-| [phase-1-fix-blockers.md](docs/auth-service/phase-1-fix-blockers.md) | **Closed** incident record for the stalled first rollout. Not an action list — it is why the probe, port and rollout-strategy parameters are what they are. |
+| `auth-service` | [prerequisites.md](docs/auth-service/prerequisites.md) (state, parameters, **open issues**) · [deploy.md](docs/auth-service/deploy.md) · [manifest-reference.md](docs/auth-service/manifest-reference.md) (field-by-field rationale) · [parameters.md](docs/auth-service/parameters.md) (upstream citations) |
+| `recommendations-service` | [prerequisites.md](docs/recommendations-service/prerequisites.md) · [deploy.md](docs/recommendations-service/deploy.md) · [cpu-capacity-options.md](docs/recommendations-service/cpu-capacity-options.md) |
+| `league-service` | [prerequisites.md](docs/league-service/prerequisites.md) — the 10-item checklist before a first apply |
 
-### Current state — 2026-10-29
+### What is still open
 
-One-time GCP setup (Workload Identity, the `auth-sql` GSA and both IAM bindings) and the
-Kubernetes Secret are **done and verified**. One prerequisite is still open: confirming the auth
-schema exists in the database `DB_NAME` points at — see
-[prerequisites.md §6.2](docs/auth-service/prerequisites.md#62-open-the-auth-schema-has-nowhere-to-live-yet).
-Then `kubectl apply -k k8s/auth-service`.
-
-### Why login comes after a working pod, not with it
-
-The published `0.0.1` image has the OAuth callback URL **compiled in** as
-`http://localhost:9999/...` — `production.yaml` is loaded via `//go:embed`, and `config.go`
-overrides `BASE_URL` and `FRONTEND_URL` from the environment but not the redirect URL. So login
-needs a code change plus a rebuild.
-
-Health and database connectivity don't. Splitting there means the first deploy validates Workload
-Identity, the Cloud SQL proxy, secrets, probes and networking against an image you already
-have — so when login is the only thing left, login is the only thing that can be wrong.
+| | |
+| --- | --- |
+| **Node CPU** | 926m of 940m requested (98%). Nothing else schedules, which is why `league-service` is reserved config rather than a running pod. |
+| **`FRONTEND_URL`** | Still `http://localhost:5173` on all three. It is both the post-login redirect target and the only allowed CORS origin, so every browser XHR fails until it is right. |
+| **Google login** | One open blocker in `auth-be`: the `__Host-oauth_tx` cookie sets `Path=/api/v1/auth/google`, which the `__Host-` prefix forbids, so browsers discard it silently. [Details](docs/auth-service/prerequisites.md#open-issues). |
+| **Schemas** | A green `/api/v1/health` never touches the database on any service. Whether the auth schema and `gm_places` exist where `DB_NAME` points is still unverified. |
 
 ---
 
@@ -80,7 +51,8 @@ have — so when login is the only thing left, login is the only thing that can 
 | Cloud SQL | `recommendations-app-instance`, POSTGRES_18, public IP `34.142.199.254` |
 | Connection name | `vincent-mini-apps-project:asia-southeast1:recommendations-app-instance` |
 | Database | `recommendations-backend` (per `configmap.yaml`) — shared with the recommendations app. No `auth_service` database exists; see [prerequisites.md §6.2](docs/auth-service/prerequisites.md#62-open-the-auth-schema-has-nowhere-to-live-yet) |
-| Registry | `asia-southeast1-docker.pkg.dev/vincent-mini-apps-project/auth-repository/auth-service` |
+| Registry | `asia-southeast1-docker.pkg.dev/vincent-mini-apps-project/<svc>-repository/<svc>-service` — `auth-repository` and `recommendations-repository` exist; `league-repository` **not yet created** |
+| Public hosts | `auth.vincentn.dev` · `recommendations-be.vincentn.dev` · `league-be.vincentn.dev` (reserved) — all behind Cloudflare, see [edge-architecture.md](docs/edge-architecture.md) |
 
 ---
 
@@ -94,25 +66,35 @@ k8s/
     service-account.yml  KSA + Workload Identity annotation (auth-sql GSA)
     configmap.yaml       non-secret env (APP_ENV, PORT=9999, DB_*, URLs, TTLs)
     deployment.yaml      app container + cloud-sql-proxy native sidecar
-    service.yaml         LoadBalancer :80 -> :9999  (Phase 2: NodePort + Ingress)
+    service.yaml         ClusterIP :80 -> :9999, NEG-annotated
+    ingress.yaml         gce Ingress: auth.vincentn.dev, global IP, Origin CA TLS
   recommendations-service/
-    ... same six files, namespace "recommendations", PORT=9998,
+    ... same seven files, namespace "recommendations", PORT=9998,
         recommendations-sql GSA
+  league-service/
+    ... same seven files, namespace "league", PORT=9200,
+        league-sql GSA -- reserved, see docs/league-service/
 docs/
-  auth-service/          prerequisites + deploy + troubleshooting + references
+  gke-parameters.md      every GKE parameter, all three services, one set of tables
+  troubleshooting.md     every failure mode, all three services
+  edge-architecture.md   Cloudflare + GCE Ingress + TLS, and how to add a service
+  auth-service/          prerequisites (incl. open issues) + deploy + 2 references
   recommendations-service/
-                         prerequisites + deploy + troubleshooting
+                         prerequisites + deploy + cpu-capacity-options
+  league-service/        prerequisites (what must exist before the first apply)
 ```
+
+Anything shared by more than one service lives at the top of `docs/`, not duplicated per
+service — the three cross-service files above replaced six per-service ones.
 
 One folder per service under both `k8s/` and `docs/`, with the same file names in each — so a
 path tells you the service and the role, and neither tree needs a prefix convention to stay
 readable as services are added.
 
-Plain YAML + Kustomize, not Helm. Two services that share a cluster but no templating still
+Plain YAML + Kustomize, not Helm. Three services that share a cluster but no templating still
 don't justify it, and the indirection would obscure exactly the details that matter while this
-is being brought up — the duplication between the two `deployment.yaml` files is the thing to
-watch, and the signal to revisit. At that point the `infra-root/` + `app-root/` Helm and Argo CD
-shape sketched out earlier becomes the right answer.
+is being brought up — the duplication between the three `deployment.yaml` files is the thing to
+watch, and the signal to revisit. At that point a Helm + Argo CD shape becomes the right answer.
 
 ### Secrets are not in this repo
 
@@ -145,11 +127,10 @@ kubectl -n auth get pods                                    # want 2/2 Running
 kubectl -n auth logs deploy/auth-service -c auth-service    # want "database connected" + "listening on :9999"
 
 # reach it
-IP=$(kubectl -n auth get svc auth-service -o jsonpath='{.status.loadBalancer.ingress[0].ip}')
-curl -s "http://$IP/api/v1/health"                          # {"ok":true,"env":"production"}
+make health SVC=auth                                        # {"ok":true,"env":"production"}
 
-# ship a new image
-cd ../auth-be && make image-push TAG=0.0.2
+# ship a new image -- CI builds on a git tag matching *.*.*, then pin the digest
+cd ../auth-be && git tag 0.1.3 && git push origin 0.1.3
 ```
 
 ---
@@ -158,15 +139,15 @@ cd ../auth-be && make image-push TAG=0.0.2
 
 - **Single spot node, `replicas: 1`.** Preemption is a full outage. Fine for staging; add a
   second node or a non-spot pool before anything depends on it.
-- **The node is nearly full: ~701m of 940m allocatable CPU goes to GKE system pods**, leaving
-  ~89m spare once this pod lands. Nothing else will schedule, and a rollout cannot run two
-  copies — which is why `maxUnavailable: 1` / `maxSurge: 0` is mandatory here, not a preference.
-  `e2-standard-2` ends this class of problem; see
+- **The node is full: 926m of 940m allocatable CPU is requested (98%)** — ~701m to GKE system
+  pods, 150m to auth-service, 75m to recommendations-service. Nothing else will schedule, and a
+  rollout cannot run two copies — which is why `maxUnavailable: 1` / `maxSurge: 0` is mandatory
+  here, not a preference. `e2-standard-2` ends this class of problem; see
   [prerequisites.md §3.2](docs/auth-service/prerequisites.md#32-cpu-budget--the-binding-constraint).
 - **Cloud SQL instance is shared** with `recommendations-backend`. Fine at this scale, worth
   knowing when you read the instance's metrics.
-- **No CI.** Deploys are manual `kubectl apply`. Natural next step once Phase 2 is green.
-- **`infra-root/`, `app-root/` and `auth-service/` are leftover empty scaffolding** and should
-  be deleted — every template file in them is 0 bytes, and the one file with content
-  (`infra-root/values.yaml`) describes the wrong project, wrong region, and a private Cloud SQL
-  IP that doesn't exist. Superseded by `k8s/`.
+- **No deploy CI.** Images are built by CI in each service repo (a git tag matching `*.*.*`
+  triggers a push to Artifact Registry), but applying manifests and pinning the new digest is
+  manual `kubectl apply`. Natural next step.
+- **Digests are pinned by hand.** That is what makes `kubectl rollout undo` meaningful, and also
+  what makes a redeploy a two-step job — bump the tag, then paste the digest.
