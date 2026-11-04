@@ -1,4 +1,4 @@
-# Phase 2 — `recommendations.vincentn.dev` on HTTPS through Cloudflare
+# Phase 2 — `recommendations-be.vincentn.dev` on HTTPS through Cloudflare
 
 The same shape as `auth-service`, which is already live. This is a **delta document**: the
 reasoning, the diagrams, the propagation timings and the troubleshooting table live in
@@ -7,7 +7,7 @@ are not repeated. Read that first if you have not; what follows is only what dif
 
 | | |
 | --- | --- |
-| **Goal** | `https://recommendations.vincentn.dev/api/v1/health` → `200` |
+| **Goal** | `https://recommendations-be.vincentn.dev/api/v1/health` → `200` |
 | **Time** | ~20 min, of which ~10 is waiting on the load balancer |
 | **Image** | the deployed `0.1.2` — **no rebuild, no code change** |
 | **Destructive** | yes, narrowly: step 3 releases `35.247.189.174` permanently |
@@ -20,7 +20,7 @@ are not repeated. Read that first if you have not; what follows is only what dif
 | | `auth-service` | `recommendations-service` |
 | --- | --- | --- |
 | Namespace | `auth` | `recommendations` |
-| Host | `auth.vincentn.dev` | `recommendations.vincentn.dev` |
+| Host | `auth.vincentn.dev` | `recommendations-be.vincentn.dev` |
 | Static IP | `auth-service-ip` → `34.8.170.48` | `recommendations-service-ip` → `8.232.192.135` |
 | Old LB IP released | `34.87.12.86` | `35.247.189.174` |
 | Container port | `9999` | `9998` |
@@ -76,13 +76,18 @@ Verify it covers the host — `-checkhost` answers this directly rather than mak
 ```bash
 kubectl -n recommendations get secret recommendations-service-origin-tls \
   -o jsonpath='{.data.tls\.crt}' | base64 -d \
-  | openssl x509 -noout -checkhost recommendations.vincentn.dev
-# => Hostname recommendations.vincentn.dev does match certificate
+  | openssl x509 -noout -checkhost recommendations-be.vincentn.dev
+# => Hostname recommendations-be.vincentn.dev does match certificate
 ```
 
-> A wildcard `*.vincentn.dev` covers exactly one label: `recommendations.vincentn.dev` matches,
+> A wildcard `*.vincentn.dev` covers exactly one label: `recommendations-be.vincentn.dev` matches,
 > `a.b.vincentn.dev` does not, and the bare apex `vincentn.dev` does not either. Fine for every
 > host this project uses.
+>
+> **This is why the tier is a hyphen, not a dot.** `recommendations.be.vincentn.dev` would be two
+> labels deep, which no wildcard here covers: it would need a fresh `*.be.vincentn.dev` Origin CA
+> cert *and* paid Advanced Certificate Manager at the edge, since free Universal SSL also stops at
+> one label. `recommendations-be` reads the same and costs nothing. Keep new hosts one label deep.
 
 ---
 
@@ -93,13 +98,13 @@ Cloudflare → **DNS → Records → Add record**:
 | Field | Value |
 | --- | --- |
 | Type | `A` |
-| Name | `recommendations` |
+| Name | `recommendations-be` *(Cloudflare appends the zone)* |
 | IPv4 address | `8.232.192.135` |
 | Proxy status | **Proxied** (orange cloud) |
 | TTL | Auto |
 
 ```bash
-dig +short recommendations.vincentn.dev    # Cloudflare edge IPs, NOT 8.232.192.135
+dig +short recommendations-be.vincentn.dev    # Cloudflare edge IPs, NOT 8.232.192.135
 ```
 
 Cloudflare edge IPs are the correct answer — the A record value is the private origin pointer.
@@ -150,15 +155,15 @@ IP=8.232.192.135
 
 # hop 2 -- origin, bypassing Cloudflare. --insecure is correct: the origin cert
 # is Cloudflare Origin CA, which your trust store does not contain by design.
-curl -sS --resolve "recommendations.vincentn.dev:443:$IP" --insecure \
-  https://recommendations.vincentn.dev/api/v1/health
+curl -sS --resolve "recommendations-be.vincentn.dev:443:$IP" --insecure \
+  https://recommendations-be.vincentn.dev/api/v1/health
 
 # hop 1 -- through Cloudflare, as a browser sees it
-curl -sS https://recommendations.vincentn.dev/api/v1/health
-curl -sI https://recommendations.vincentn.dev/api/v1/health | grep -iE 'cf-ray|server:'
+curl -sS https://recommendations-be.vincentn.dev/api/v1/health
+curl -sI https://recommendations-be.vincentn.dev/api/v1/health | grep -iE 'cf-ray|server:'
 
 # plaintext must not serve. 301 expected (Always Use HTTPS is on zone-wide).
-curl -sI http://recommendations.vincentn.dev/api/v1/health | head -1
+curl -sI http://recommendations-be.vincentn.dev/api/v1/health | head -1
 ```
 
 Finally, confirm you now have exactly two load balancers and no stray regional one:
@@ -172,9 +177,9 @@ kubectl get svc -A --field-selector spec.type=LoadBalancer    # expect: no resou
 
 ## Exit checklist
 
-- [ ] `dig +short recommendations.vincentn.dev` → Cloudflare IPs, not `8.232.192.135`
+- [ ] `dig +short recommendations-be.vincentn.dev` → Cloudflare IPs, not `8.232.192.135`
 - [ ] Ingress `ADDRESS` is `8.232.192.135`; backend `HEALTHY`
-- [ ] `https://recommendations.vincentn.dev/api/v1/health` → `200`
+- [ ] `https://recommendations-be.vincentn.dev/api/v1/health` → `200`
 - [ ] `http://` → `301`, never `200`
 - [ ] No `LoadBalancer` Service remains anywhere in the cluster
 - [ ] `FRONTEND_URL` set to the real SPA origin (still a `TODO` in `configmap.yaml`)

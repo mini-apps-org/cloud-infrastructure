@@ -69,7 +69,7 @@ events: ## Pod events -- read this first on a failure
 # LoadBalancer IP to read. The fallback below stays for any service that still
 # has one.
 HEALTH_URL_auth            := https://auth.vincentn.dev
-HEALTH_URL_recommendations := https://recommendations.vincentn.dev
+HEALTH_URL_recommendations := https://recommendations-be.vincentn.dev
 HEALTH_URL ?= $(HEALTH_URL_$(SVC))
 
 .PHONY: health

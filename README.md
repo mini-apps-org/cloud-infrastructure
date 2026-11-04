@@ -7,7 +7,7 @@ Covers two services:
 | Service | Source | Namespace | Manifests | Docs | State |
 | --- | --- | --- | --- | --- | --- |
 | **`auth-service`** | `../auth-be` | `auth` | `k8s/auth-service/` | [docs/](docs/auth-service/prerequisites.md) | live on `https://auth.vincentn.dev` (Cloudflare + GCE Ingress) |
-| **`recommendations-service`** | `../recommendations-be` | `recommendations` | `k8s/recommendations-service/` | [docs/recommendations-service/](docs/recommendations-service/prerequisites.md) | deployed, `2/2 Running`; Ingress for `recommendations.vincentn.dev` staged, not yet applied |
+| **`recommendations-service`** | `../recommendations-be` | `recommendations` | `k8s/recommendations-service/` | [docs/recommendations-service/](docs/recommendations-service/prerequisites.md) | live on `https://recommendations-be.vincentn.dev` (Cloudflare + GCE Ingress), `2/2 Running` |
 
 ---
 
@@ -17,7 +17,7 @@ Covers two services:
 | --- | --- |
 | **[prerequisites.md](docs/recommendations-service/prerequisites.md)** | Everything that must be true before an apply, **and every parameter** with its verified live value and the command that checks it. §7 is the field-by-field manifest rationale. Start here. |
 | **[deploy.md](docs/recommendations-service/deploy.md)** | The linear step-by-step deploy — node resize, Artifact Registry, Workload Identity, image build, Secret, apply, layered verification — plus redeploy / new-image / rollback. |
-| **[phase-2-ingress-cloudflare.md](docs/recommendations-service/phase-2-ingress-cloudflare.md)** | `recommendations.vincentn.dev` on HTTPS behind Cloudflare. A **delta** doc — the shared reasoning lives in the auth-service runbook of the same name. |
+| **[phase-2-ingress-cloudflare.md](docs/recommendations-service/phase-2-ingress-cloudflare.md)** | `recommendations-be.vincentn.dev` on HTTPS behind Cloudflare. A **delta** doc — the shared reasoning lives in the auth-service runbook of the same name. |
 | [troubleshooting.md](docs/recommendations-service/troubleshooting.md) | Organised by the error you are actually looking at. |
 
 Nothing is pre-done for this service: no GSA, no registry repo, no image, no Secret. And one hard

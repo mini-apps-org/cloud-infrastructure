@@ -25,11 +25,11 @@ spec:
     # is a copy, not a reference. Created imperatively; never in git.
     - secretName: recommendations-service-origin-tls
       hosts:
-        - recommendations.vincentn.dev
+        - recommendations-be.vincentn.dev
   rules:
     # Host-scoped: a request to the raw LB IP matches no rule and gets the
     # default backend's 404.
-    - host: recommendations.vincentn.dev
+    - host: recommendations-be.vincentn.dev
       http:
         paths:
           - path: /
