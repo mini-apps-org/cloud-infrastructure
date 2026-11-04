@@ -8,7 +8,7 @@ recommendation is a two-step sequence rather than a single choice.
 
 Narrower views of the same facts: [prerequisites.md §3.2](./prerequisites.md#32-blocker-the-node-has-no-room-for-this-pod)
 (the blocker as a prerequisite) · [deploy.md step 1](./deploy.md#step-1--make-room-on-the-cluster-blocker)
-(the command to run) · [troubleshooting.md](./troubleshooting.md) (the symptom).
+(the command to run) · [troubleshooting.md](../troubleshooting.md) (the symptom).
 
 > ### Naming, because the letters collide
 > [prerequisites.md §3.2](./prerequisites.md#32-blocker-the-node-has-no-room-for-this-pod) already
