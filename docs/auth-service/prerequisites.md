@@ -119,9 +119,11 @@ kubectl describe node -l cloud.google.com/gke-nodepool=minimal-pool \
 
 Two consequences that have already bitten this deployment:
 
-1. **No third workload will schedule.** 14m is not enough for anything — which is why
-   `league-service` is reserved config rather than a running pod
-   ([league-service/prerequisites.md](../league-service/prerequisites.md)).
+1. **No third workload will schedule.** 14m is not enough for anything. This is what pushed
+   `league-service` onto a cluster of its own rather than a third namespace here
+   ([league-service/prerequisites.md](../league-service/prerequisites.md)); it is still reserved
+   config, but the reason is now that `league-cluster` and its dependencies do not exist yet,
+   not CPU.
 2. **A rollout cannot run two copies of the pod at once.** This is why
    `deployment.yaml` sets `maxUnavailable: 1` / `maxSurge: 0`. With the more usual
    `maxUnavailable: 0` / `maxSurge: 1`, the old pod cannot be removed until the new one is

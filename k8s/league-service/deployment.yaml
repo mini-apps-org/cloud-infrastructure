@@ -6,24 +6,27 @@ metadata:
   labels:
     app: league-service
 spec:
-  # BLOCKER: the single e2-medium has no room for this pod. ~701m of 940m
-  # allocatable CPU goes to GKE system pods, and auth-service (150m) plus
-  # recommendations-service (75m) take the rest. This Deployment is reserved
-  # config, not a schedulable workload, until the node pool grows -- see
-  # docs/league-service/prerequisites.md.
+  # One pod on league-cluster's own node. ~701m of 940m allocatable CPU goes to
+  # GKE system pods, leaving ~240m, so this pod's 75m fits with room for a surge
+  # replica during a rollout -- the CPU contention that kept this Deployment
+  # unschedulable was auth-service and recommendations-service sharing the node,
+  # and a dedicated cluster removes it. Still ONE spot node: preemption is a
+  # full outage for this service.
   replicas: 1
   selector:
     matchLabels:
       app: league-service
-  # maxUnavailable MUST be 1 here, not 0: two copies of this pod do not fit on
-  # one e2-medium, and 0/1 deadlocks (the old pod cannot go until the new one is
-  # Ready, the new one cannot schedule until the old one goes). Flip to 0/1 once
-  # the node pool has room.
+  # 0/1 -- deliberately the OPPOSITE of auth-service and recommendations-service,
+  # and the dedicated cluster is the whole reason. On the shared node 1/0 is
+  # mandatory: two copies do not fit, so maxUnavailable: 0 deadlocks (the old pod
+  # cannot go until the new one is Ready, the new one cannot schedule until the
+  # old one goes). Here ~240m is free, the 75m surge replica schedules, and the
+  # old pod only goes once the new one is Ready -- no gap in service.
   strategy:
     type: RollingUpdate
     rollingUpdate:
-      maxUnavailable: 1
-      maxSurge: 0
+      maxUnavailable: 0
+      maxSurge: 1
   template:
     metadata:
       labels:
@@ -51,9 +54,10 @@ spec:
             - "--health-check"
             - "--http-address=0.0.0.0"
             - "--http-port=9090"
-            # The same shared instance as auth-service and
-            # recommendations-service, a different logical database.
-            - "vincent-mini-apps-project:asia-southeast1:recommendations-app-instance"
+            # league's OWN Cloud SQL instance -- NOT the shared
+            # recommendations-app-instance that auth-service and
+            # recommendations-service both point at.
+            - "vincent-mini-apps-project:asia-southeast1:league-app-instance"
           # No --credentials-file: Workload Identity supplies the token via the
           # bound KSA.
           securityContext:

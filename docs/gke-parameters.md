@@ -1,31 +1,74 @@
 # GKE parameters — all services
 
 Every parameter that decides how these services run on GKE, in one place.
-Three services, same shape, different values.
+Three services, same shape, different values — and, since league moved to a cluster of its own,
+**two clusters**. Where a value differs because of that, the table says so.
 
 | | `auth-service` | `recommendations-service` | `league-service` |
 | --- | --- | --- | --- |
 | State | live | live | **reserved, not deployed** |
+| Cluster | `vincent-cluster` | `vincent-cluster` | `league-cluster` **(to create)** |
 | Source repo | `../auth-be` | `../recommendations-be` | `../../league/league-be` |
 | Manifests | `k8s/auth-service/` | `k8s/recommendations-service/` | `k8s/league-service/` |
 
 ---
 
-## 1. Cluster — shared by all three
+## 1. Project — shared by all three
 
 | Parameter | Value |
 | --- | --- |
 | Project | `vincent-mini-apps-project` |
 | gcloud configuration | `personal` |
-| Cluster | `vincent-cluster` (zonal) |
 | Zone | `asia-southeast1-a` |
-| Node pool | `minimal-pool` — 1× `e2-medium`, spot, no taints |
-| Allocatable CPU | 940m |
-| Allocatable memory | ~3Gi |
 | Workload Identity pool | `vincent-mini-apps-project.svc.id.goog` |
-| Cloud SQL instance | `recommendations-app-instance`, POSTGRES_18 |
-| Connection name | `vincent-mini-apps-project:asia-southeast1:recommendations-app-instance` |
 | Registry host | `asia-southeast1-docker.pkg.dev` |
+
+The Workload Identity pool id is a property of the **project**, not of a cluster, so it is the
+same string for all three services even though they do not share a cluster. What *is* per-cluster
+is whether the pool is enabled (`--workload-pool` at create time); with it off, every KSA
+annotation and GSA binding in this repo is inert.
+
+## 1b. Clusters — two of them
+
+| Parameter | `vincent-cluster` | `league-cluster` |
+| --- | --- | --- |
+| Services | `auth-service`, `recommendations-service` | `league-service` only |
+| Kind | zonal, `asia-southeast1-a` | zonal, `asia-southeast1-a` |
+| Node pool | `minimal-pool` — 1× `e2-medium`, spot, no taints | `default-pool` — 1× `e2-medium`, spot, no taints |
+| Allocatable CPU / memory | 940m / ~3Gi | 940m / ~3Gi |
+| CPU requested | **926m (98%)** — full | 75m, 150m at rollout peak |
+| Rollout strategy it permits | `maxUnavailable: 1` / `maxSurge: 0` only | `maxUnavailable: 0` / `maxSurge: 1` |
+| kubectl context | `gke_vincent-mini-apps-project_asia-southeast1-a_vincent-cluster` | `gke_vincent-mini-apps-project_asia-southeast1-a_league-cluster` |
+| State | live | **not created yet** (verified 2026-11-06) |
+
+The node pool name differs for a dull reason: `gcloud container clusters create` has no flag to
+name the initial pool, so a new cluster gets `default-pool`. It matters only when you filter by
+`-l cloud.google.com/gke-nodepool=`.
+
+**Two clusters means two contexts, and `kubectl` silently follows whichever one is current.**
+`make apply SVC=league` against a `vincent-cluster` context would deploy league into the shared
+cluster, where it cannot schedule anyway. Every `make` target preflights the context against the
+cluster expected for that `SVC` and refuses to run on a mismatch (§10).
+
+## 1c. Cloud SQL — one instance each is not the case
+
+| Parameter | auth | recommendations | league |
+| --- | --- | --- | --- |
+| Instance | `recommendations-app-instance` | `recommendations-app-instance` | `league-app-instance` **(to create)** |
+| Tier | `db-perf-optimized-N-8` (Enterprise Plus) | same instance | `db-g1-small` (Enterprise) suggested |
+| Version | POSTGRES_18 | POSTGRES_18 | POSTGRES_18 |
+| Connection name | `…:asia-southeast1:recommendations-app-instance` | same | `…:asia-southeast1:league-app-instance` |
+| Database | `recommendations-backend` | `recommendations-backend` | `league-backend` **(to create)** |
+| `postgres` password | already set | already set | **must be set** — a new instance has none |
+
+auth and recommendations share one instance; league gets its own. Note the tier gap deliberately:
+cloning `db-perf-optimized-N-8` for a service that serves one health route would be a large bill,
+and edition is not something you change with a resize.
+
+The dedicated instance costs the manifests exactly **one line** — the connection name argument to
+`cloud-sql-proxy`. There is no VPC peering, no authorized network and no cross-cluster networking
+to arrange: the proxy dials the instance's public IP using the Cloud SQL Admin API and the
+`roles/cloudsql.client` grant on its GSA, from wherever it runs.
 
 ---
 
@@ -56,7 +99,9 @@ Cloud SQL rejects it.
 
 | Parameter | auth | recommendations | league |
 | --- | --- | --- | --- |
-| Public host | `auth.vincentn.dev` | `recommendations-be.vincentn.dev` | `league-be.vincentn.dev` |
+| Public host | `auth.vincentn.dev` | `recommendations-be.vincentn.dev` | `mvip-league-be.dev` |
+| Cloudflare zone | `vincentn.dev` | `vincentn.dev` | `mvip-league-be.dev` — **its own zone** |
+| DNS record | `auth` (A, proxied) | `recommendations-be` (A, proxied) | `@` apex (A, proxied) |
 | Container port | 9999 | 9998 | 9200 |
 | Service type | ClusterIP | ClusterIP | ClusterIP |
 | Service port | 80 → `http` | 80 → `http` | 80 → `http` |
@@ -72,9 +117,19 @@ Shared Ingress settings:
 | `kubernetes.io/ingress.allow-http` | `false` | Cloudflare Full (strict) only dials 443. Requires "Always Use HTTPS" on the zone |
 | `cloud.google.com/neg` (Service) | `{"ingress": true}` | Container-native LB: the LB health check inherits the `readinessProbe` |
 
-TLS is one Cloudflare Origin CA certificate for `*.vincentn.dev`, copied into each namespace —
-Secrets are namespaced, so each service holds a copy, not a reference. Trusted only by
-Cloudflare, which is the only client of these load balancers.
+**TLS is two certificates, not one.** `auth-service` and `recommendations-service` share one
+Cloudflare Origin CA certificate for `*.vincentn.dev`, copied into each namespace — Secrets are
+namespaced, so each holds a copy rather than a reference.
+
+`league-service` cannot use it. `mvip-league-be.dev` is a separate registrable domain — its own
+apex, its own Cloudflare zone — and a wildcard covers one label beneath *its own* domain, nothing
+in another. It needs an Origin certificate issued for `mvip-league-be.dev` (and
+`*.mvip-league-be.dev`), which means the zone must be delegated to Cloudflare first. Reuse the
+`*.vincentn.dev` secret and Cloudflare Full (strict) reports a **526** while the pod behind it
+looks perfectly healthy.
+
+Both certificates are trusted only by Cloudflare, which is the only client of these load
+balancers.
 
 ---
 
@@ -87,21 +142,42 @@ Cloudflare, which is the only client of these load balancers.
 | Memory request | 128Mi | 64Mi | 128Mi | 64Mi | 128Mi | 64Mi |
 | Memory limit | 256Mi | 128Mi | 256Mi | 128Mi | 256Mi | 128Mi |
 
-### The binding constraint
+The per-container numbers above are identical across both clusters. What differs is how much
+room is left around them, and that decides the rollout strategy.
+
+### `vincent-cluster` — the binding constraint
 
 | | CPU |
 | --- | --- |
 | Allocatable | 940m |
-| Currently requested | **926m (98%)** — verified 2026-11-04 |
+| GKE system pods | ~701m |
+| `auth-service` 150m + `recommendations-service` 75m | 225m |
+| **Requested** | **926m (98%)** — verified 2026-11-04 |
 | **Free** | **14m** |
-| `league-service` wants | **75m** |
 
-So `league-service` cannot schedule today. See
+Full. Nothing else schedules here, which is why **`maxUnavailable: 1` / `maxSurge: 0`** is
+mandatory on those two, not a preference: two copies of a pod do not fit, and
+`maxUnavailable: 0` deadlocks — the old pod cannot go until the new one is Ready, and the new one
+cannot schedule until the old one goes. See
 [recommendations-service/cpu-capacity-options.md](recommendations-service/cpu-capacity-options.md).
 
-This is also why **`maxUnavailable: 1` / `maxSurge: 0`** is mandatory on all three, not a
-preference: two copies of a pod do not fit, and `maxUnavailable: 0` deadlocks — the old pod
-cannot go until the new one is Ready, and the new one cannot schedule until the old one goes.
+### `league-cluster` — room to roll
+
+| | CPU |
+| --- | --- |
+| Allocatable | 940m |
+| GKE system pods | ~701m — measured on `vincent-cluster`; re-verify once the cluster exists |
+| `league-service` (app 50m + proxy 25m) | 75m |
+| Surge replica during a rollout | +75m |
+| **Peak** | **~851m**, leaving ~89m |
+
+This is the entire reason league was blocked before and is not now: the CPU it needed was being
+spent on the other two services, not on anything league does. With a node of its own the surge
+replica fits, so `deployment.yaml` uses **`maxUnavailable: 0` / `maxSurge: 1`** and a rollout has
+no gap in service.
+
+**The three services therefore disagree on this field on purpose.** `1/0` on the shared cluster is
+a deadlock workaround; `0/1` on league's is the behaviour you actually want. Do not normalise them.
 
 ---
 
@@ -124,7 +200,7 @@ Two rules behind these:
 
 ---
 
-## 6. cloud-sql-proxy sidecar — identical on all three
+## 6. cloud-sql-proxy sidecar — one argument differs
 
 | Parameter | Value |
 | --- | --- |
@@ -133,9 +209,14 @@ Two rules behind these:
 | DB listen | `--port=5432` on loopback |
 | Health server | `--http-address=0.0.0.0 --http-port=9090` |
 | Credentials | none — Workload Identity via the bound KSA |
+| Instance argument | auth / recommendations: `…:recommendations-app-instance` · league: `…:league-app-instance` |
 
 Native, not ordinary: each app pings the database at startup and `log.Fatalf`s on failure. A plain
 sidecar starts in parallel, so the app loses the race and crashloops.
+
+The **1.29+** requirement is why a new cluster should be created on a release channel rather than
+pinned to an old version: without native sidecar support `restartPolicy: Always` on an
+initContainer is rejected and the app never starts.
 
 ---
 
@@ -150,9 +231,9 @@ sidecar starts in parallel, so the app loses the race and crashloops.
 | `DB_HOST` | `127.0.0.1` | `127.0.0.1` | `127.0.0.1` |
 | `DB_PORT` | `5432` | `5432` | `5432` |
 | `DB_USER` | `postgres` | `postgres` | `postgres` |
-| `DB_NAME` | `recommendations-backend` | `recommendations-backend` | `league` **(to create)** |
+| `DB_NAME` | `recommendations-backend` | `recommendations-backend` | `league-backend` **(to create)** |
 | `DB_SSLMODE` | `disable` | `disable` | `disable` |
-| `BASE_URL` | `https://auth.vincentn.dev` | `https://recommendations-be.vincentn.dev` | `https://league-be.vincentn.dev` |
+| `BASE_URL` | `https://auth.vincentn.dev` | `https://recommendations-be.vincentn.dev` | `https://mvip-league-be.dev` |
 | `FRONTEND_URL` | `http://localhost:5173` ⚠️ | `http://localhost:5173` ⚠️ | `http://localhost:5173` ⚠️ |
 | `GOOGLE_OAUTH_REDIRECT_URL` | set, **ignored by the image** | — | **not settable** |
 | `SESSION_TTL` | `12h` | — | `12h` |
@@ -229,11 +310,23 @@ make rollback SVC=league
 
 `SVC` is `auth`, `recommendations` (the default) or `league`.
 
-Always preflight — kubectl's token comes from the **active gcloud configuration**, so a context
-pointing at `vincent-cluster` is not sufficient on its own:
+**`SVC` also selects the cluster.** `auth` and `recommendations` expect a `vincent-cluster`
+context; `league` expects `league-cluster`. Every target checks
+`kubectl config current-context` against the expected cluster and stops on a mismatch, so a
+stale context is an error rather than a deploy into the wrong cluster.
+
+Switching:
 
 ```bash
-kubectl config current-context    # ...vincent-cluster
+gcloud container clusters get-credentials vincent-cluster --zone asia-southeast1-a   # auth, recommendations
+gcloud container clusters get-credentials league-cluster  --zone asia-southeast1-a   # league
+```
+
+Always preflight — kubectl's token comes from the **active gcloud configuration**, so the right
+context is not sufficient on its own:
+
+```bash
+kubectl config current-context    # ...vincent-cluster  OR  ...league-cluster
 gcloud config get account         # vinhnguyentan99@gmail.com
 kubectl get nodes                 # one Ready node
 ```

@@ -18,10 +18,7 @@ data:
   DB_PORT: "5432"
   DB_USER: "postgres"
   DB_SSLMODE: "disable"
-
-  # TODO: no database named "league" exists on recommendations-app-instance yet.
-  # Create it, or point this at an existing one, before the first apply.
-  DB_NAME: "league"
+  DB_NAME: "league-backend"
 
   # DATABASE_URL is deliberately absent. config.go assigns it unconditionally and
   # ConnectDatabaseString() PREFERS it over every DB_* value, so defining it here
