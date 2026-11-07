@@ -93,7 +93,7 @@ spec:
           # `kubectl rollout undo` meaningless -- append @sha256:... here once
           # league-be's release workflow has built 0.1.0 (it fires on a git tag
           # matching *.*.*), and keep ENV_IMAGE in configmap.yaml in step.
-          image: asia-southeast1-docker.pkg.dev/vincent-mini-apps-project/league-repository/league-service:0.1.0
+          image: asia-southeast1-docker.pkg.dev/vincent-mini-apps-project/league-repository/league-service:0.1.1
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
