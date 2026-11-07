@@ -6,22 +6,16 @@ metadata:
   labels:
     app: league-service
 spec:
-  # One pod on league-cluster's own node. ~701m of 940m allocatable CPU goes to
-  # GKE system pods, leaving ~240m, so this pod's 75m fits with room for a surge
-  # replica during a rollout -- the CPU contention that kept this Deployment
-  # unschedulable was auth-service and recommendations-service sharing the node,
-  # and a dedicated cluster removes it. Still ONE spot node: preemption is a
-  # full outage for this service.
+  # GKE system pods take ~701m of the node's 940m allocatable CPU; the ~240m left
+  # fits this pod's 75m plus a surge replica. Still ONE spot node, so preemption
+  # is a full outage for this service.
   replicas: 1
   selector:
     matchLabels:
       app: league-service
-  # 0/1 -- deliberately the OPPOSITE of auth-service and recommendations-service,
-  # and the dedicated cluster is the whole reason. On the shared node 1/0 is
-  # mandatory: two copies do not fit, so maxUnavailable: 0 deadlocks (the old pod
-  # cannot go until the new one is Ready, the new one cannot schedule until the
-  # old one goes). Here ~240m is free, the 75m surge replica schedules, and the
-  # old pod only goes once the new one is Ready -- no gap in service.
+  # 0/1 -- the OPPOSITE of auth-service and recommendations-service, which must use
+  # 1/0 because two copies do not fit on their shared node (maxUnavailable: 0
+  # deadlocks there). The free ~240m here makes a gapless rollout possible instead.
   strategy:
     type: RollingUpdate
     rollingUpdate:
@@ -38,10 +32,9 @@ spec:
         seccompProfile:
           type: RuntimeDefault
 
-      # cloud-sql-proxy is a NATIVE sidecar (initContainer + restartPolicy:
-      # Always), not an ordinary container. Load-bearing: main.go calls
-      # db.Connect before serving and log.Fatalf's on failure, so a plain sidecar
-      # lets the app lose the startup race and crashloop. Needs Kubernetes 1.29+.
+      # NATIVE sidecar (initContainer + restartPolicy: Always), not an ordinary
+      # container, and load-bearing: main.go log.Fatalf's if db.Connect fails, so a
+      # plain sidecar loses the startup race and crashloops. Needs Kubernetes 1.29+.
       initContainers:
         - name: cloud-sql-proxy
           image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.14.1
@@ -49,14 +42,13 @@ spec:
           args:
             - "--structured-logs"
             - "--port=5432"
-            # The DB port stays on loopback. The health server is what kubelet
-            # probes, so it alone listens on the pod IP.
+            # The DB port stays on loopback; only the health server kubelet probes
+            # listens on the pod IP.
             - "--health-check"
             - "--http-address=0.0.0.0"
             - "--http-port=9090"
-            # league's OWN Cloud SQL instance -- NOT the shared
-            # recommendations-app-instance that auth-service and
-            # recommendations-service both point at.
+            # league's OWN instance -- NOT the shared recommendations-app-instance
+            # that auth-service and recommendations-service point at.
             - "vincent-mini-apps-project:asia-southeast1:league-app-instance"
           # No --credentials-file: Workload Identity supplies the token via the
           # bound KSA.
@@ -68,17 +60,16 @@ spec:
               drop: ["ALL"]
           resources:
             requests:
-              # Matched to recommendations-service, not auth-service: 25m + 50m is
-              # the leanest pair that still starts. The proxy is near-idle once
-              # the pool is established and can burst to the 200m limit.
+              # 25m + 50m is the leanest pair that still starts (matched to
+              # recommendations-service). The proxy is near-idle once the pool is
+              # established and can burst to the 200m limit.
               cpu: 25m
               memory: 64Mi
             limits:
               cpu: 200m
               memory: 128Mi
-          # NOT tcpSocket on 5432: kubelet dials the pod IP from outside the
-          # pod's network namespace, while the proxy binds 127.0.0.1 only -- that
-          # probe can never pass.
+          # NOT tcpSocket on 5432: kubelet dials the pod IP from outside the pod's
+          # network namespace, and the proxy binds 127.0.0.1 only.
           startupProbe:
             httpGet:
               path: /startup
@@ -88,12 +79,10 @@ spec:
 
       containers:
         - name: league-service
-          # TODO: no image has been pushed to league-repository yet. Both other
-          # services pin an immutable digest, because a moved tag makes
-          # `kubectl rollout undo` meaningless -- append @sha256:... here once
-          # league-be's release workflow has built 0.1.0 (it fires on a git tag
-          # matching *.*.*), and keep ENV_IMAGE in configmap.yaml in step.
-          image: asia-southeast1-docker.pkg.dev/vincent-mini-apps-project/league-repository/league-service:0.1.1
+          # Digest-pinned like the other two services: a moved tag would make
+          # `kubectl rollout undo` meaningless. The tag is the only version source
+          # -- the binary reports it from an -ldflags-stamped value.
+          image: asia-southeast1-docker.pkg.dev/vincent-mini-apps-project/league-repository/league-service:0.1.3@sha256:8454b6dd4299e7e5a7ceedc7dcbb689cc0d61943c301ca97281814cf7a697a3f
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
@@ -101,16 +90,14 @@ spec:
           envFrom:
             - configMapRef:
                 name: league-service-config
-            # Four keys. DB_PASSWORD is used at runtime; the three OAuth/crypto
-            # keys are required by config.Load() regardless, which rejects an
-            # empty GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET or
+            # Four keys. Only DB_PASSWORD is used at runtime, but config.Load()
+            # rejects an empty GOOGLE_OAUTH_CLIENT_ID, GOOGLE_OAUTH_CLIENT_SECRET or
             # ENCRYPTION_KEY before anything checks whether a route uses them.
             - secretRef:
                 name: league-service-secrets
           securityContext:
-            # runAsUser is deliberately unset: the distroless :nonroot tag
-            # already sets numeric 65532, which is what lets runAsNonRoot be
-            # verified. Restating it as a name would break that check.
+            # runAsUser is deliberately unset: the distroless :nonroot tag already
+            # sets numeric 65532, which is what lets runAsNonRoot be verified.
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities:
@@ -122,10 +109,9 @@ spec:
             limits:
               cpu: 500m
               memory: 256Mi
-          # /api/v1/health only marshals config strings and never touches the
-          # pool, so one slow query cannot evict a healthy pod -- and a green
-          # probe says nothing about the schema. CORS does not interfere: kubelet
-          # sends no Origin header.
+          # /api/v1/health only marshals config strings and never touches the pool,
+          # so a slow query cannot evict a healthy pod -- and a green probe says
+          # nothing about the schema. kubelet sends no Origin header, so CORS is moot.
           startupProbe:
             httpGet:
               path: /api/v1/health

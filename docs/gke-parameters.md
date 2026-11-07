@@ -244,7 +244,6 @@ initContainer is rejected and the app never starts.
 | `SESSION_IDLE_TTL` | `30m` | — | `30m` |
 | `GOOGLE_ALLOWED_HD` | — | — | `""` (any account) |
 | `ENCRYPTION_KEY_VERSION` | — | — | `1` |
-| `ENV_IMAGE` | — | — | `0.1.0` |
 
 `DB_HOST: 127.0.0.1` is the proxy sidecar, not Cloud SQL. `DB_SSLMODE: disable` is correct and
 not a weakening — that hop is loopback inside the pod, and the proxy makes the TLS connection to

@@ -235,11 +235,11 @@ is an error rather than a deploy into the shared cluster.
 ```bash
 kubectl apply -k k8s/league-service     # or: make apply SVC=league
 make status SVC=league
-make health SVC=league                  # {"ok":true,"env":"production","image":"0.1.0"}
+make health SVC=league                  # {"ok":true,"env":"production","image":"0.1.2"}
 ```
 
-`image` in that response comes from `ENV_IMAGE` in the ConfigMap, not from the running image —
-keep the two in step or it will lie to you.
+`image` in that response is stamped into the binary at build time (`-ldflags -X` in the
+Dockerfile, fed by the release tag), so it always reports the build that is actually running.
 
 ---
 
