@@ -184,3 +184,14 @@ gcloud iam service-accounts add-iam-policy-binding "$SA" \
     --member="principalSet://iam.googleapis.com/projects/${PROJECT_NUMBER}/locations/global/workloadIdentityPools/${POOL_ID}/attribute.repository/${GITHUB_REPO}"
 
 echo "Infrastructure preflight completed successfully!"
+
+# Get the allocated IPv4 to register the record in CloudFlare
+# gcloud compute addresses create league-service-ip --global
+# gcloud compute addresses describe $NAMESPACE_SERVICE-service-ip --global --format='value(address)'
+# E.g: gcloud compute addresses describe league-service-ip --global --format='value(address)'
+
+# TEMP_DIR=$(mktemp -d)
+
+# kubectl -n league create secret tls league-service-origin-tls \
+#   --cert="$TEMP_DIR/mvip-league-be-origin.pem" \
+#   --key="$TEMP_DIR/mvip-league-be-origin.key"

@@ -47,6 +47,8 @@ data:
 
   ENCRYPTION_KEY_VERSION: "1"
 
+  GOOGLE_OAUTH_REDIRECT_URL: "https://be.mvip-league.com/api/v1/auth/google/callback"
+
   # GOOGLE_OAUTH_REDIRECT_URL is NOT settable here. config.go reads
   # auth.google_oauth_redirect_url only from the embedded production.yaml via
   # mapstructure, with no environment override, and Load() fails when it is
