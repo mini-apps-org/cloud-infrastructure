@@ -127,9 +127,11 @@ scheduler refuses on a reservation ledger, so "but the CPU is idle" is true and 
 
 Two consequences:
 
-- **Nothing else will schedule** — `league-service` is reserved config, not a running pod.
-- **No rollout can run two copies of a pod**, which is why both Deployments set
-  `maxUnavailable: 1` / `maxSurge: 0`. The usual `maxUnavailable: 0` deadlocks here.
+- **Nothing else will schedule here** — which is why `league-service` targets its own
+  `league-cluster` instead of a third namespace on this node.
+- **No rollout can run two copies of a pod**, which is why both Deployments on this cluster set
+  `maxUnavailable: 1` / `maxSurge: 0`. The usual `maxUnavailable: 0` deadlocks here. Note that
+  `league-service` uses `0` / `1` — correctly, because its own node has the room.
 
 > **Spot nodes:** preemption of the single node is a full outage for both services. Adding a
 > second node makes that a partial outage *only if* the pods land on different nodes, which

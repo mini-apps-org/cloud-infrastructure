@@ -11,8 +11,8 @@ metadata:
 
     # Its own reserved GLOBAL address; regional ones are rejected. It cannot
     # share auth-service-ip or recommendations-service-ip -- a global address
-    # backs exactly one forwarding rule. Sharing one load balancer across
-    # namespaces needs the Gateway API, which this cluster does not have.
+    # backs exactly one forwarding rule, and those two are on a different
+    # cluster entirely, so no load-balancer sharing is even on the table here.
     #
     # TODO: reserve this address before the first apply, or the Ingress stays
     # without an IP indefinitely:
@@ -25,17 +25,19 @@ metadata:
     kubernetes.io/ingress.allow-http: "false"
 spec:
   tls:
-    # The same Cloudflare Origin certificate as the other two services -- it is
-    # issued for *.vincentn.dev, so it covers this host too. Secrets are
-    # namespaced, so this is a copy, not a reference. Created imperatively;
-    # never in git.
+    # A DIFFERENT certificate from the other two services. They share one
+    # Cloudflare Origin cert for *.vincentn.dev; be.mvip-league.com is its own
+    # apex zone, which that wildcard does not cover -- a wildcard matches one
+    # label under its own domain, nothing in another. So this needs an Origin
+    # cert issued for the be.mvip-league.com zone, or Cloudflare Full (strict)
+    # rejects the origin with a 526. Created imperatively; never in git.
     - secretName: league-service-origin-tls
       hosts:
-        - mvip-league-be.dev
+        - be.mvip-league.com
   rules:
     # Host-scoped: a request to the raw LB IP matches no rule and gets the
     # default backend's 404.
-    - host: mvip-league-be.dev
+    - host: be.mvip-league.com
       http:
         paths:
           - path: /

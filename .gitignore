@@ -4,3 +4,5 @@ secret-*.yaml
 key.json
 *.key
 .DS_Store
+
+cmd/load-secret.sh

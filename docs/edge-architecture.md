@@ -1,14 +1,18 @@
 # How the edge is wired
 
-Shared by all three services. Each gets its own GCE Ingress and global IP, behind one Cloudflare
-zone. Values per service are in [gke-parameters.md](./gke-parameters.md).
+Shared by all three services. Each gets its own GCE Ingress and global IP behind Cloudflare.
+Two things are *not* shared, both because of `league-service`: it runs on its own cluster
+(`league-cluster`), and it sits in its own Cloudflare zone (`be.mvip-league.com`) rather than
+under `vincentn.dev`. The edge shape is identical either way — what differs is which zone's
+settings and which Origin certificate apply. Values per service are in
+[gke-parameters.md](./gke-parameters.md).
 
 ```mermaid
 flowchart LR
     B(["Browser"])
 
     subgraph CF["Cloudflare"]
-        E["Edge proxy<br/>&lt;host&gt;.vincentn.dev"]
+        E["Edge proxy<br/>zone: vincentn.dev<br/>or be.mvip-league.com"]
     end
 
     subgraph GCP["Google Cloud · global"]
@@ -16,7 +20,7 @@ flowchart LR
         HC["Health checkers<br/>130.211.0.0/22<br/>35.191.0.0/16"]
     end
 
-    subgraph GKE["GKE vincent-cluster · asia-southeast1-a"]
+    subgraph GKE["GKE · asia-southeast1-a<br/>vincent-cluster, or league-cluster for league"]
         NEG["NEG<br/>pod IPs, no node port"]
         subgraph POD["Pod · 2/2"]
             APP["app container"]
@@ -24,7 +28,7 @@ flowchart LR
         end
     end
 
-    SQL[("Cloud SQL<br/>recommendations-app-instance")]
+    SQL[("Cloud SQL<br/>recommendations-app-instance<br/>league-app-instance for league")]
 
     B -- "TLS 1 · public CA<br/>Universal SSL" --> E
     E -- "TLS 2 · Cloudflare Origin CA<br/>:443 only, port 80 closed" --> LB
@@ -63,10 +67,17 @@ but change that probe path and the load balancer's check silently follows. A mis
 a `502` from a pod `kubectl` insists is healthy.
 
 **Hosts must stay one label deep.** A wildcard `*.vincentn.dev` covers exactly one label:
-`league-be.vincentn.dev` matches, `league.be.vincentn.dev` does not, and the bare apex does not
-either. Two labels deep would need a fresh `*.be.vincentn.dev` Origin CA cert *and* paid Advanced
-Certificate Manager at the edge, since free Universal SSL also stops at one label. **Use a hyphen,
-not a dot** — `recommendations-be`, not `recommendations.be`.
+`recommendations-be.vincentn.dev` matches, `recommendations.be.vincentn.dev` does not, and the
+bare apex does not either. Two labels deep would need a fresh `*.be.vincentn.dev` Origin CA cert
+*and* paid Advanced Certificate Manager at the edge, since free Universal SSL also stops at one
+label. **Use a hyphen, not a dot** — `recommendations-be`, not `recommendations.be`.
+
+**A different domain is a different zone, not a deeper host.** `league-service` is on
+`be.mvip-league.com`, which is its own registrable domain and therefore its own apex — the
+`*.vincentn.dev` wildcard has nothing to do with it. That means a second zone delegated to
+Cloudflare, its own Origin CA certificate, its own copy of the zone settings below, and an **A
+record on `@`** rather than a subdomain label. Reusing the `*.vincentn.dev` secret there is the
+mistake to watch for: the pod stays healthy and Cloudflare reports a **526**.
 
 ---
 
@@ -74,23 +85,29 @@ not a dot** — `recommendations-be`, not `recommendations.be`.
 
 | Choice | Why not the alternative |
 | --- | --- |
-| **GCE Ingress**, not nginx-ingress | The node is at 926m of 940m allocatable CPU. An in-cluster controller requests ~100m and would sit `Pending` forever. A GCE Ingress is provisioned *outside* the cluster and costs **0m** of node CPU. Not a preference — the only option that schedules. |
+| **GCE Ingress**, not nginx-ingress | On `vincent-cluster` this is forced: the node is at 926m of 940m allocatable CPU, an in-cluster controller requests ~100m, and it would sit `Pending` forever. A GCE Ingress is provisioned *outside* the cluster and costs **0m** of node CPU. On `league-cluster` ~240m is free, so nginx would in fact schedule — the reason there is the weaker one: 0m of node CPU on a single spot node, and the same Origin-CA story as the other two. |
 | **Cloudflare Origin CA cert**, not a Google `ManagedCertificate` | A managed cert proves domain control by requiring the host to resolve to *its* load balancer. Behind the orange cloud it resolves to Cloudflare, so issuance parks in `Provisioning` then reports `FailedNotVisible`. An Origin cert needs no validation, issues instantly, lasts 15 years. |
-| **One Ingress per service**, not one shared | An Ingress can only reference Services in **its own namespace**, and these live in `auth`, `recommendations` and `league`. A global address also backs exactly one forwarding rule, so the IPs cannot be shared either. |
+| **One Ingress per service**, not one shared | An Ingress can only reference Services in **its own namespace**, and these live in `auth`, `recommendations` and `league`. A global address also backs exactly one forwarding rule, so the IPs cannot be shared either. For `league` the question does not even arise: it is alone on its own cluster. |
 | **Full (strict)**, not Flexible or Full | **Flexible** sends Cloudflare→origin traffic as plaintext across the public internet while showing the browser a padlock. **Full** (non-strict) encrypts but validates nothing, accepting any certificate from anyone. |
 | **ClusterIP**, not LoadBalancer | The Ingress owns the public address. A `LoadBalancer` Service would bill a second one on an address nothing resolves to, and container-native LB never uses a node port. |
 
 Genuinely sharing one load balancer across namespaces needs the **Gateway API** (one `Gateway`
-plus an `HTTPRoute` per namespace). That is the right end state, but it is not enabled on this
-cluster (`kubectl get gatewayclass` → `the server doesn't have a resource type`) and adopting it
-means migrating the two live services off their working Ingresses. Revisit when the duplication
-actually hurts.
+plus an `HTTPRoute` per namespace). That is the right end state for `vincent-cluster`, but it is
+not enabled there (`kubectl get gatewayclass` → `the server doesn't have a resource type`) and
+adopting it means migrating the two live services off their working Ingresses. It buys `league`
+nothing either way — one service on its own cluster has nothing to share a load balancer with.
+Revisit when the duplication actually hurts.
 
 ---
 
 ## Cloudflare zone settings
 
-Zone-level, so they already apply to every host — nothing to redo per service.
+Zone-level, so they apply to every host **in that zone** — nothing to redo per service under
+`vincentn.dev`. The `be.mvip-league.com` zone is a separate zone and starts with Cloudflare's
+defaults, so every row below has to be set a second time there. `Full (strict)` and
+`Always Use HTTPS` are the two that break `league-service` outright if missed: the Ingress sets
+`allow-http: "false"`, so a plaintext request hits a port with no forwarding rule and Cloudflare
+reports a **520** instead of redirecting.
 
 | Setting | Value | Why |
 | --- | --- | --- |
@@ -190,12 +207,13 @@ curl -sI http://<host>.vincentn.dev/api/v1/health | head -1      # 301, never 20
 | --- | --- | --- |
 | Ingress `ADDRESS` empty >5 min | No controller claimed it | You "fixed" the deprecation warning. Restore `kubernetes.io/ingress.class: "gce"` |
 | Cloudflare **525** handshake failed | Origin has no working cert on 443 | Expected until the LB finishes. After that, verify the TLS secret exists in the namespace and matches `spec.tls.hosts` |
-| Cloudflare **526** invalid cert | Full (strict), origin cert does not validate | Not a Cloudflare Origin CA cert, or its hostname does not cover the host |
+| Cloudflare **526** invalid cert | Full (strict), origin cert does not validate | Not a Cloudflare Origin CA cert, or its hostname does not cover the host. **On `league` the likely cause is the `*.vincentn.dev` secret being reused** — it cannot cover `be.mvip-league.com`, a separate apex |
+| Cloudflare **520** on plaintext, 443 fine | `allow-http: "false"` with no edge redirect | **Always Use HTTPS** is off for that zone. Easy to miss on `be.mvip-league.com`, which is a second zone with Cloudflare defaults |
 | Cloudflare **502/504** | Backend `UNHEALTHY` | `describe ingress`. Check the readinessProbe path still answers 200 — the LB check derives from it |
 | Backend `UNHEALTHY` forever | Health check cannot reach the pod | Confirm the NEG exists, size 1: `gcloud compute network-endpoint-groups list`. If the firewall was customised, allow `130.211.0.0/22` and `35.191.0.0/16` to the pod port |
 | 404 from the LB, pods healthy | Host header did not match | Rules are host-scoped by design; the bare IP matches nothing. Use `--resolve` |
 | Cert warning in a browser | Origin cert served to the public | The proxy is off for that record. `dig` must return Cloudflare IPs |
-| New pod `Pending`, `Insufficient cpu` | Node at 98% requested CPU | Pre-existing. See [cpu-capacity-options.md](./recommendations-service/cpu-capacity-options.md) |
+| New pod `Pending`, `Insufficient cpu` | `vincent-cluster` node at 98% requested CPU | Pre-existing there. On `league-cluster` it means the surge replica did not fit — re-check the node budget, or fall back to `maxSurge: 0`. See [cpu-capacity-options.md](./recommendations-service/cpu-capacity-options.md) |
 
 ---
 

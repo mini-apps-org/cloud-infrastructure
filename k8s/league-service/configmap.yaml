@@ -18,10 +18,7 @@ data:
   DB_PORT: "5432"
   DB_USER: "postgres"
   DB_SSLMODE: "disable"
-
-  # TODO: no database named "league" exists on recommendations-app-instance yet.
-  # Create it, or point this at an existing one, before the first apply.
-  DB_NAME: "league"
+  DB_NAME: "league-backend"
 
   # DATABASE_URL is deliberately absent. config.go assigns it unconditionally and
   # ConnectDatabaseString() PREFERS it over every DB_* value, so defining it here
@@ -29,7 +26,7 @@ data:
 
   # Cloudflare's edge, not the load balancer: the app only uses this to build
   # URLs it hands a browser, so it must be what the browser can reach.
-  BASE_URL: "https://mvip-league-be.dev"
+  BASE_URL: "https://be.mvip-league.com"
 
   # TODO: the real SPA origin (league-fe). Doubles as post-login redirect target
   # AND the only allowed CORS origin (middleware/cors.go), so a wrong value
@@ -49,6 +46,8 @@ data:
   GOOGLE_ALLOWED_HD: ""
 
   ENCRYPTION_KEY_VERSION: "1"
+
+  GOOGLE_OAUTH_REDIRECT_URL: "https://be.mvip-league.com/api/v1/auth/google/callback"
 
   # GOOGLE_OAUTH_REDIRECT_URL is NOT settable here. config.go reads
   # auth.google_oauth_redirect_url only from the embedded production.yaml via

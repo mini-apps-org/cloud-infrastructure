@@ -7,6 +7,18 @@ Substitute throughout: `SVC` is `auth`, `recommendations` or `league`; the names
 and the deployment, app container and KSA are all `SVC-service`. `make <target> SVC=<svc>` works
 from the repo root.
 
+**`SVC` also picks a cluster.** `auth` and `recommendations` are on `vincent-cluster`, `league` is
+on `league-cluster`. Before theorising about anything below, confirm you are looking at the right
+one — `kubectl` follows the current context silently, and "the resource does not exist" and "I am
+in the wrong cluster" look identical:
+
+```bash
+kubectl config current-context
+gcloud container clusters get-credentials <cluster> --zone asia-southeast1-a
+```
+
+`make` targets check this for you and refuse to run on a mismatch; raw `kubectl` does not.
+
 Edge/HTTPS problems are in [edge-architecture.md](./edge-architecture.md#edge-symptoms).
 Values are in [gke-parameters.md](./gke-parameters.md).
 
@@ -24,8 +36,10 @@ Values are in [gke-parameters.md](./gke-parameters.md).
       Deployment makes a new ReplicaSet and the old pod keeps its original spec forever:
       `kubectl -n <svc> get rs -o custom-columns='NAME:.metadata.name,REV:.metadata.annotations.deployment\.kubernetes\.io/revision,DESIRED:.spec.replicas,READY:.status.readyReplicas'`
 - [ ] Do not trust the Deployment's `Available` condition. With `replicas: 1` and
-      `maxUnavailable: 1`, zero running pods still satisfies the minimum, so `Available: True`
-      coexists with nothing running. Only `Progressing` reports the failure.
+      `maxUnavailable: 1` (auth, recommendations), zero running pods still satisfies the minimum,
+      so `Available: True` coexists with nothing running. Only `Progressing` reports the failure.
+      `league` uses `maxUnavailable: 0`, so there `Available` is meaningful — but a stuck surge
+      pod shows up as `Progressing` either way.
 - [ ] Follow both containers at once:
       `kubectl -n <svc> logs -f deploy/<svc>-service --all-containers --prefix`
 - [ ] Reach the app without involving the load balancer:
@@ -35,6 +49,22 @@ Values are in [gke-parameters.md](./gke-parameters.md).
 ---
 
 ## Phase 1 — Access and identity
+
+- [ ] `kubectl`/`make` says a namespace, deployment or secret **does not exist** and you are sure
+      it was created → you are almost certainly in the other cluster. `league` resources exist
+      only on `league-cluster`, `auth`/`recommendations` only on `vincent-cluster`.
+      `kubectl config current-context` is the one-line check.
+- [ ] **league only** — the pod runs but `cloud-sql-proxy` logs a token or permission error,
+      while the KSA annotation and the GSA `workloadIdentityUser` binding both look right →
+      Workload Identity may not be **enabled on the cluster**, which is a third, cluster-level
+      requirement that does not exist on `vincent-cluster` because it was enabled there long ago:
+      `gcloud container clusters describe league-cluster --zone asia-southeast1-a --format='value(workloadIdentityConfig.workloadPool)'`
+      must print `vincent-mini-apps-project.svc.id.goog`. Empty means the annotation is inert and
+      the proxy authenticated as the node's service account.
+- [ ] **league only** — `cloud-sql-proxy` cannot authenticate to the database at all and
+      `DB_PASSWORD` came from the shared instance → `league-app-instance` is a *different*
+      instance with its own `postgres` password. A brand-new instance has none until
+      `gcloud sql users set-password` runs.
 
 - [ ] `kubectl` returns `Forbidden` naming an unexpected account → the **identity** is wrong, not
       the context. The kubeconfig holds no credential, only an `exec` hook that mints a token for
