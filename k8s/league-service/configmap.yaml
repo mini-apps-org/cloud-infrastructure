@@ -26,7 +26,7 @@ data:
 
   # Cloudflare's edge, not the load balancer: the app only uses this to build
   # URLs it hands a browser, so it must be what the browser can reach.
-  BASE_URL: "https://mvip-league-be.dev"
+  BASE_URL: "https://be.mvip-league.com"
 
   # TODO: the real SPA origin (league-fe). Doubles as post-login redirect target
   # AND the only allowed CORS origin (middleware/cors.go), so a wrong value

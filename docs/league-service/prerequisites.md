@@ -60,7 +60,7 @@ enforces the right context per `SVC`; see §7.
 | 11 | Image `league-service:0.1.0` pushed | git-tag `0.1.0` in `league-be` (fires `release.yaml`) | `gcloud artifacts docker images list asia-southeast1-docker.pkg.dev/vincent-mini-apps-project/league-repository/league-service` |
 | 12 | Secret `league-service-secrets` | see §4 | `kubectl -n league get secret league-service-secrets` |
 | 13 | TLS secret `league-service-origin-tls` | see §5 | `kubectl -n league get secret league-service-origin-tls` |
-| 14 | Cloudflare zone `mvip-league-be.dev` in the account, `@` → the step 7 IP, **proxied** | Cloudflare dashboard | `dig +short mvip-league-be.dev` |
+| 14 | Cloudflare zone `be.mvip-league.com` in the account, `@` → the step 7 IP, **proxied** | Cloudflare dashboard | `dig +short be.mvip-league.com` |
 
 Verified on 2026-11-06: **`league-cluster` does not exist** — `gcloud container clusters list`
 returns only `vincent-cluster`. Steps 3, 4, 7 and 8 do not exist either: `gcloud` lists only
@@ -177,15 +177,15 @@ This is the one place league differs from the other two services at the edge, an
 get wrong because the pattern looks identical.
 
 `auth-service` and `recommendations-service` both copy **one** Cloudflare Origin CA certificate
-issued for `*.vincentn.dev`. `league-service` is on `mvip-league-be.dev`, which is a separate
+issued for `*.vincentn.dev`. `league-service` is on `be.mvip-league.com`, which is a separate
 registrable domain — its own apex, its own Cloudflare zone. A wildcard covers one label beneath
 *its own* domain and nothing in another, so `*.vincentn.dev` does not cover it. Reusing that
 secret here produces a certificate/host mismatch that Cloudflare Full (strict) reports as a
 **526**, with the pod perfectly healthy behind it.
 
-So: add `mvip-league-be.dev` as a zone in the Cloudflare account (its nameservers must be
+So: add `be.mvip-league.com` as a zone in the Cloudflare account (its nameservers must be
 delegated there — Origin CA will only issue for a zone Cloudflare serves), issue an Origin
-certificate for `mvip-league-be.dev` *and* `*.mvip-league-be.dev`, then:
+certificate for `be.mvip-league.com` *and* `*.be.mvip-league.com`, then:
 
 ```bash
 kubectl -n league create secret tls league-service-origin-tls \

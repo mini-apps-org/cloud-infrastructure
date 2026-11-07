@@ -26,18 +26,18 @@ metadata:
 spec:
   tls:
     # A DIFFERENT certificate from the other two services. They share one
-    # Cloudflare Origin cert for *.vincentn.dev; mvip-league-be.dev is its own
+    # Cloudflare Origin cert for *.vincentn.dev; be.mvip-league.com is its own
     # apex zone, which that wildcard does not cover -- a wildcard matches one
     # label under its own domain, nothing in another. So this needs an Origin
-    # cert issued for the mvip-league-be.dev zone, or Cloudflare Full (strict)
+    # cert issued for the be.mvip-league.com zone, or Cloudflare Full (strict)
     # rejects the origin with a 526. Created imperatively; never in git.
     - secretName: league-service-origin-tls
       hosts:
-        - mvip-league-be.dev
+        - be.mvip-league.com
   rules:
     # Host-scoped: a request to the raw LB IP matches no rule and gets the
     # default backend's 404.
-    - host: mvip-league-be.dev
+    - host: be.mvip-league.com
       http:
         paths:
           - path: /

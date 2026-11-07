@@ -103,8 +103,8 @@ Cloud SQL rejects it.
 
 | Parameter | auth | recommendations | league |
 | --- | --- | --- | --- |
-| Public host | `auth.vincentn.dev` | `recommendations-be.vincentn.dev` | `mvip-league-be.dev` |
-| Cloudflare zone | `vincentn.dev` | `vincentn.dev` | `mvip-league-be.dev` — **its own zone** |
+| Public host | `auth.vincentn.dev` | `recommendations-be.vincentn.dev` | `be.mvip-league.com` |
+| Cloudflare zone | `vincentn.dev` | `vincentn.dev` | `be.mvip-league.com` — **its own zone** |
 | DNS record | `auth` (A, proxied) | `recommendations-be` (A, proxied) | `@` apex (A, proxied) |
 | Container port | 9999 | 9998 | 9200 |
 | Service type | ClusterIP | ClusterIP | ClusterIP |
@@ -125,10 +125,10 @@ Shared Ingress settings:
 Cloudflare Origin CA certificate for `*.vincentn.dev`, copied into each namespace — Secrets are
 namespaced, so each holds a copy rather than a reference.
 
-`league-service` cannot use it. `mvip-league-be.dev` is a separate registrable domain — its own
+`league-service` cannot use it. `be.mvip-league.com` is a separate registrable domain — its own
 apex, its own Cloudflare zone — and a wildcard covers one label beneath *its own* domain, nothing
-in another. It needs an Origin certificate issued for `mvip-league-be.dev` (and
-`*.mvip-league-be.dev`), which means the zone must be delegated to Cloudflare first. Reuse the
+in another. It needs an Origin certificate issued for `be.mvip-league.com` (and
+`*.be.mvip-league.com`), which means the zone must be delegated to Cloudflare first. Reuse the
 `*.vincentn.dev` secret and Cloudflare Full (strict) reports a **526** while the pod behind it
 looks perfectly healthy.
 
@@ -237,7 +237,7 @@ initContainer is rejected and the app never starts.
 | `DB_USER` | `postgres` | `postgres` | `postgres` |
 | `DB_NAME` | `recommendations-backend` | `recommendations-backend` | `league-backend` **(to create)** |
 | `DB_SSLMODE` | `disable` | `disable` | `disable` |
-| `BASE_URL` | `https://auth.vincentn.dev` | `https://recommendations-be.vincentn.dev` | `https://mvip-league-be.dev` |
+| `BASE_URL` | `https://auth.vincentn.dev` | `https://recommendations-be.vincentn.dev` | `https://be.mvip-league.com` |
 | `FRONTEND_URL` | `http://localhost:5173` ⚠️ | `http://localhost:5173` ⚠️ | `http://localhost:5173` ⚠️ |
 | `GOOGLE_OAUTH_REDIRECT_URL` | set, **ignored by the image** | — | **not settable** |
 | `SESSION_TTL` | `12h` | — | `12h` |

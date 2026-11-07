@@ -2,7 +2,7 @@
 
 Shared by all three services. Each gets its own GCE Ingress and global IP behind Cloudflare.
 Two things are *not* shared, both because of `league-service`: it runs on its own cluster
-(`league-cluster`), and it sits in its own Cloudflare zone (`mvip-league-be.dev`) rather than
+(`league-cluster`), and it sits in its own Cloudflare zone (`be.mvip-league.com`) rather than
 under `vincentn.dev`. The edge shape is identical either way — what differs is which zone's
 settings and which Origin certificate apply. Values per service are in
 [gke-parameters.md](./gke-parameters.md).
@@ -12,7 +12,7 @@ flowchart LR
     B(["Browser"])
 
     subgraph CF["Cloudflare"]
-        E["Edge proxy<br/>zone: vincentn.dev<br/>or mvip-league-be.dev"]
+        E["Edge proxy<br/>zone: vincentn.dev<br/>or be.mvip-league.com"]
     end
 
     subgraph GCP["Google Cloud · global"]
@@ -73,7 +73,7 @@ bare apex does not either. Two labels deep would need a fresh `*.be.vincentn.dev
 label. **Use a hyphen, not a dot** — `recommendations-be`, not `recommendations.be`.
 
 **A different domain is a different zone, not a deeper host.** `league-service` is on
-`mvip-league-be.dev`, which is its own registrable domain and therefore its own apex — the
+`be.mvip-league.com`, which is its own registrable domain and therefore its own apex — the
 `*.vincentn.dev` wildcard has nothing to do with it. That means a second zone delegated to
 Cloudflare, its own Origin CA certificate, its own copy of the zone settings below, and an **A
 record on `@`** rather than a subdomain label. Reusing the `*.vincentn.dev` secret there is the
@@ -103,7 +103,7 @@ Revisit when the duplication actually hurts.
 ## Cloudflare zone settings
 
 Zone-level, so they apply to every host **in that zone** — nothing to redo per service under
-`vincentn.dev`. The `mvip-league-be.dev` zone is a separate zone and starts with Cloudflare's
+`vincentn.dev`. The `be.mvip-league.com` zone is a separate zone and starts with Cloudflare's
 defaults, so every row below has to be set a second time there. `Full (strict)` and
 `Always Use HTTPS` are the two that break `league-service` outright if missed: the Ingress sets
 `allow-http: "false"`, so a plaintext request hits a port with no forwarding rule and Cloudflare
@@ -207,8 +207,8 @@ curl -sI http://<host>.vincentn.dev/api/v1/health | head -1      # 301, never 20
 | --- | --- | --- |
 | Ingress `ADDRESS` empty >5 min | No controller claimed it | You "fixed" the deprecation warning. Restore `kubernetes.io/ingress.class: "gce"` |
 | Cloudflare **525** handshake failed | Origin has no working cert on 443 | Expected until the LB finishes. After that, verify the TLS secret exists in the namespace and matches `spec.tls.hosts` |
-| Cloudflare **526** invalid cert | Full (strict), origin cert does not validate | Not a Cloudflare Origin CA cert, or its hostname does not cover the host. **On `league` the likely cause is the `*.vincentn.dev` secret being reused** — it cannot cover `mvip-league-be.dev`, a separate apex |
-| Cloudflare **520** on plaintext, 443 fine | `allow-http: "false"` with no edge redirect | **Always Use HTTPS** is off for that zone. Easy to miss on `mvip-league-be.dev`, which is a second zone with Cloudflare defaults |
+| Cloudflare **526** invalid cert | Full (strict), origin cert does not validate | Not a Cloudflare Origin CA cert, or its hostname does not cover the host. **On `league` the likely cause is the `*.vincentn.dev` secret being reused** — it cannot cover `be.mvip-league.com`, a separate apex |
+| Cloudflare **520** on plaintext, 443 fine | `allow-http: "false"` with no edge redirect | **Always Use HTTPS** is off for that zone. Easy to miss on `be.mvip-league.com`, which is a second zone with Cloudflare defaults |
 | Cloudflare **502/504** | Backend `UNHEALTHY` | `describe ingress`. Check the readinessProbe path still answers 200 — the LB check derives from it |
 | Backend `UNHEALTHY` forever | Health check cannot reach the pod | Confirm the NEG exists, size 1: `gcloud compute network-endpoint-groups list`. If the firewall was customised, allow `130.211.0.0/22` and `35.191.0.0/16` to the pod port |
 | 404 from the LB, pods healthy | Host header did not match | Rules are host-scoped by design; the bare IP matches nothing. Use `--resolve` |

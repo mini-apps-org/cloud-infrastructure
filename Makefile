@@ -99,7 +99,7 @@ events: check-context ## Pod events -- read this first on a failure
 # has one.
 HEALTH_URL_auth            := https://auth.vincentn.dev
 HEALTH_URL_recommendations := https://recommendations-be.vincentn.dev
-HEALTH_URL_league          := https://mvip-league-be.dev
+HEALTH_URL_league          := https://be.mvip-league.com
 HEALTH_URL ?= $(HEALTH_URL_$(SVC))
 
 .PHONY: health

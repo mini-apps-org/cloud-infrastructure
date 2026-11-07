@@ -8,7 +8,7 @@ Covers three services across **two clusters**:
 | --- | --- | --- | --- | --- | --- | --- |
 | **`auth-service`** | `../auth-be` | `vincent-cluster` | `auth` | `k8s/auth-service/` | [docs/](docs/auth-service/prerequisites.md) | live on `https://auth.vincentn.dev` (Cloudflare + GCE Ingress) |
 | **`recommendations-service`** | `../recommendations-be` | `vincent-cluster` | `recommendations` | `k8s/recommendations-service/` | [docs/recommendations-service/](docs/recommendations-service/prerequisites.md) | live on `https://recommendations-be.vincentn.dev` (Cloudflare + GCE Ingress), `2/2 Running` |
-| **`league-service`** | `../../league/league-be` | `league-cluster` | `league` | `k8s/league-service/` | [docs/league-service/](docs/league-service/prerequisites.md) | **reserved — not deployed.** Manifests complete and `kustomize`-valid, targeting `https://mvip-league-be.dev`; the cluster itself, plus the GSA, registry repo, image, static IP, Cloud SQL instance and Secrets, do not exist yet |
+| **`league-service`** | `../../league/league-be` | `league-cluster` | `league` | `k8s/league-service/` | [docs/league-service/](docs/league-service/prerequisites.md) | **reserved — not deployed.** Manifests complete and `kustomize`-valid, targeting `https://be.mvip-league.com`; the cluster itself, plus the GSA, registry repo, image, static IP, Cloud SQL instance and Secrets, do not exist yet |
 
 `league-service` is deliberately on a cluster of its own rather than sharing `vincent-cluster`.
 That is what unblocks it — on the shared node there was 14m of CPU free against the 75m it needs
@@ -64,7 +64,7 @@ Per service:
 | Cloud SQL · auth + recommendations | `recommendations-app-instance`, POSTGRES_18, `db-perf-optimized-N-8`, public IP `34.142.199.254`, database `recommendations-backend` — shared. No `auth_service` database exists; see [prerequisites.md §6.2](docs/auth-service/prerequisites.md#62-open-the-auth-schema-has-nowhere-to-live-yet) |
 | Cloud SQL · league | `league-app-instance`, POSTGRES_18, database `league-backend` — **not created yet**. Its own instance, not a second database on the shared one |
 | Registry | `asia-southeast1-docker.pkg.dev/vincent-mini-apps-project/<svc>-repository/<svc>-service` — `auth-repository` and `recommendations-repository` exist; `league-repository` **not yet created**. Project-scoped, so both clusters pull from it |
-| Public hosts | `auth.vincentn.dev` · `recommendations-be.vincentn.dev` (zone `vincentn.dev`) · `mvip-league-be.dev` (reserved, **its own zone and its own Origin certificate**) — all behind Cloudflare, see [edge-architecture.md](docs/edge-architecture.md) |
+| Public hosts | `auth.vincentn.dev` · `recommendations-be.vincentn.dev` (zone `vincentn.dev`) · `be.mvip-league.com` (reserved, **its own zone and its own Origin certificate**) — all behind Cloudflare, see [edge-architecture.md](docs/edge-architecture.md) |
 
 ---
 
