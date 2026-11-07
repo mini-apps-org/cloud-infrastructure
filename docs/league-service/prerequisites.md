@@ -91,6 +91,10 @@ gcloud container clusters create league-cluster \
   --release-channel regular
 ```
 
+What every flag does, and which defaults this short command leaves in place:
+[../cluster-creation.md](../cluster-creation.md) — a generic GKE guide, so substitute the values
+above for its `${PROJECT}` / `${CLUSTER}` / `${ZONE}`.
+
 Four of those flags are load-bearing:
 
 | Flag | Why it is not optional |

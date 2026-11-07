@@ -28,6 +28,12 @@ Shared across all three services — read these first:
 | **[troubleshooting.md](docs/troubleshooting.md)** | Every failure mode, in the order a deploy hits them. Organised by the error in front of you. |
 | **[edge-architecture.md](docs/edge-architecture.md)** | How Cloudflare + GCE Ingress + TLS fit together, and how to put a new service behind the edge. |
 
+Standalone, and not specific to this repo — safe to share or read on its own:
+
+| Document | What it is for |
+| --- | --- |
+| **[cluster-creation.md](docs/cluster-creation.md)** | Setting up a basic GKE cluster with `gcloud`, flag by flag: what the node size decides, what can and cannot be changed afterwards, and what it costs. Project-agnostic — our own values live in `gke-parameters.md`. |
+
 Per service:
 
 | Service | Documents |
@@ -41,7 +47,7 @@ Per service:
 | | |
 | --- | --- |
 | **`vincent-cluster` node CPU** | 926m of 940m requested (98%). Nothing else schedules there. No longer blocks `league-service`, which moved to its own cluster, but it still means the two live services cannot roll without a brief gap. |
-| **`league-cluster`** | Not created yet. Everything else in `league-service`'s 14-item checklist is downstream of it. |
+| **`league-cluster`** | Not created yet. Everything else in `league-service`'s 14-item checklist is downstream of it. The command to create it is [league-service/prerequisites.md §2](docs/league-service/prerequisites.md#2-the-cluster); what each flag does is [cluster-creation.md](docs/cluster-creation.md). |
 | **`FRONTEND_URL`** | Still `http://localhost:5173` on all three. It is both the post-login redirect target and the only allowed CORS origin, so every browser XHR fails until it is right. |
 | **Google login** | One open blocker in `auth-be`: the `__Host-oauth_tx` cookie sets `Path=/api/v1/auth/google`, which the `__Host-` prefix forbids, so browsers discard it silently. [Details](docs/auth-service/prerequisites.md#open-issues). |
 | **Schemas** | A green `/api/v1/health` never touches the database on any service. Whether the auth schema and `gm_places` exist where `DB_NAME` points is still unverified. |
@@ -82,6 +88,7 @@ k8s/
         league-sql GSA -- reserved, see docs/league-service/
 docs/
   gke-parameters.md      every GKE parameter, all three services, one set of tables
+  cluster-creation.md    basic GKE cluster setup with gcloud (generic, shareable)
   troubleshooting.md     every failure mode, all three services
   edge-architecture.md   Cloudflare + GCE Ingress + TLS, and how to add a service
   auth-service/          prerequisites (incl. open issues) + deploy + 2 references

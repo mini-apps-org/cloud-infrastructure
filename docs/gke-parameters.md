@@ -41,6 +41,10 @@ annotation and GSA binding in this repo is inert.
 | kubectl context | `gke_vincent-mini-apps-project_asia-southeast1-a_vincent-cluster` | `gke_vincent-mini-apps-project_asia-southeast1-a_league-cluster` |
 | State | live | **not created yet** (verified 2026-11-06) |
 
+Creating the missing one: the command, with our values, is in
+[league-service/prerequisites.md §2](./league-service/prerequisites.md#2-the-cluster); what each
+flag actually does is [cluster-creation.md](./cluster-creation.md).
+
 The node pool name differs for a dull reason: `gcloud container clusters create` has no flag to
 name the initial pool, so a new cluster gets `default-pool`. It matters only when you filter by
 `-l cloud.google.com/gke-nodepool=`.

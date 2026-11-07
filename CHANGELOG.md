@@ -1,3 +1,7 @@
+# 2026-11-07
+
+- docs: add cluster-creation — a standalone, project-agnostic guide to setting up a basic GKE cluster with `gcloud`
+
 # 2026-11-06
 
 - feat(league): target a dedicated `league-cluster` instead of sharing `vincent-cluster`
