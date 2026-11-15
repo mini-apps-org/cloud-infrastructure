@@ -82,7 +82,7 @@ spec:
           # Digest-pinned like the other two services: a moved tag would make
           # `kubectl rollout undo` meaningless. The tag is the only version source
           # -- the binary reports it from an -ldflags-stamped value.
-          image: asia-southeast1-docker.pkg.dev/vincent-mini-apps-project/league-repository/league-service:0.4.1@sha256:6cf96d1100d87c62c00142623b14ce871a1f69708fbf93205e0f453484679810
+          image: asia-southeast1-docker.pkg.dev/vincent-mini-apps-project/league-repository/league-service:0.5.0@sha256:b15147867e5fabc618d23fee19186df1be28b1d12e758f05eaa3aa0f32e91e6d
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
