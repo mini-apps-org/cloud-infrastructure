@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mini-app-service.labels" . | nindent 4 }}
+  annotations:
+    # Container-native LB: the Ingress gets a NEG of pod IPs and reaches pods
+    # directly, so its health check inherits the readinessProbe.
+    cloud.google.com/neg: '{"ingress": true}'
+spec:
+  # The GCE Ingress owns the public address; container-native LB never uses a
+  # node port, so ClusterIP is enough.
+  type: ClusterIP
+  selector:
+    {{- include "mini-app-service.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+      protocol: TCP

@@ -8,6 +8,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$SCRIPT_DIR/load-secret.sh"
+source "$SCRIPT_DIR/wif-config.sh"
 
 export PROJECT="vincent-mini-apps-project"
 export PROJECT_NUMBER
@@ -23,11 +24,8 @@ export REPOSITORY_NAME="league-repository"
 export NAMESPACE_SERVICE="league"
 export NAME_SERVICE="league-service"
 
-export GITHUB_REPO="tanvinhnguyen2504/${NAMESPACE_SERVICE}-be"
+export GITHUB_REPO="${GITHUB_ORG}/${NAMESPACE_SERVICE}-be"
 export GITHUB_ACTIONS_SA_NAME="github-actions"
-
-export POOL_ID="github-pool"
-export PROVIDER_ID="github-provider"
 
 export SA="${GITHUB_ACTIONS_SA_NAME}@${PROJECT}.iam.gserviceaccount.com"
 export GSA="${NAMESPACE_SERVICE}-sql@${PROJECT}.iam.gserviceaccount.com"
@@ -95,7 +93,9 @@ gcloud projects add-iam-policy-binding "$PROJECT" \
 # 7. Create Kubernetes namespace and resources
 # --------------------------------------------------
 
-kubectl apply -f "k8s/${NAME_SERVICE}/namespace.yaml"
+# Created outside Helm on purpose: a Helm-owned namespace is deleted, Secrets
+# and all, on `helm uninstall`. Idempotent.
+kubectl create namespace "$NAMESPACE_SERVICE" --dry-run=client -o yaml | kubectl apply -f -
 
 # Create/update Kubernetes secrets
 kubectl -n "$NAMESPACE_SERVICE" create secret generic "${NAME_SERVICE}-secrets" \
@@ -105,13 +105,12 @@ kubectl -n "$NAMESPACE_SERVICE" create secret generic "${NAME_SERVICE}-secrets" 
     --from-literal=ENCRYPTION_KEY="$ENCRYPTION_KEY" \
     --dry-run=client -o yaml | kubectl apply -f -
 
-# Apply Kubernetes manifests
-kubectl apply -k "k8s/${NAME_SERVICE}"
-
-# Connect Kubernetes Service Account to GSA
-kubectl -n "$NAMESPACE_SERVICE" annotate serviceaccount "$NAME_SERVICE" \
-    "iam.gke.io/gcp-service-account=${GSA}" \
-    --overwrite
+# Install or upgrade the release. The chart sets the KSA's
+# iam.gke.io/gcp-service-account annotation from gcpServiceAccount, so no
+# separate `kubectl annotate` -- Helm would revert it anyway. On a service still
+# applied with `kubectl apply -k`, adopt it first (docs/helm-migration.md §3.4).
+helm upgrade --install "$NAME_SERVICE" helm/mini-app-service \
+    -n "$NAMESPACE_SERVICE" -f "helm/values/${NAMESPACE_SERVICE}.yaml"
 
 # Allow KSA to impersonate GSA
 gcloud iam service-accounts add-iam-policy-binding "$GSA" \
@@ -147,10 +146,8 @@ if ! gcloud iam workload-identity-pools describe "$POOL_ID" \
         --display-name="GitHub Actions Pool"
 fi
 
-# Only allow these repositories to authenticate
-ATTRIBUTE_CONDITION="assertion.repository in ['tanvinhnguyen2504/auth-service', 'tanvinhnguyen2504/recommendations-be', 'tanvinhnguyen2504/league-be']"
-
-# Create or update OIDC provider
+# Create or update OIDC provider. Condition and mapping come from
+# wif-config.sh -- never inline them here (see that file for why).
 if gcloud iam workload-identity-pools providers describe "$PROVIDER_ID" \
     --project="$PROJECT" \
     --location="global" \
@@ -161,8 +158,8 @@ if gcloud iam workload-identity-pools providers describe "$PROVIDER_ID" \
         --location="global" \
         --workload-identity-pool="$POOL_ID" \
         --issuer-uri="https://token.actions.githubusercontent.com" \
-        --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
-        --attribute-condition="$ATTRIBUTE_CONDITION"
+        --attribute-mapping="$WIF_ATTRIBUTE_MAPPING" \
+        --attribute-condition="$WIF_ATTRIBUTE_CONDITION"
 
 else
 
@@ -172,8 +169,8 @@ else
         --workload-identity-pool="$POOL_ID" \
         --display-name="GitHub Actions Provider" \
         --issuer-uri="https://token.actions.githubusercontent.com" \
-        --attribute-mapping="google.subject=assertion.sub,attribute.repository=assertion.repository" \
-        --attribute-condition="$ATTRIBUTE_CONDITION"
+        --attribute-mapping="$WIF_ATTRIBUTE_MAPPING" \
+        --attribute-condition="$WIF_ATTRIBUTE_CONDITION"
 
 fi
 

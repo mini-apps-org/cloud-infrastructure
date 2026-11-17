@@ -1,0 +1,47 @@
+name: Validate
+
+on:
+  pull_request:
+    branches:
+      - master
+    paths:
+      - "helm/**"
+      - ".github/workflows/**"
+
+# No id-token: this workflow cannot get GCP credentials, so it cannot deploy.
+# (A PR could grant itself id-token, but the deployer binding only admits
+# cloud-infrastructure@refs/heads/master -- see cmd/setup-cd-access.sh.)
+permissions:
+  contents: read
+
+jobs:
+  helm:
+    name: Helm (${{ matrix.service }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [auth, recommendations, league]
+    env:
+      VALUES: helm/values/${{ matrix.service }}.yaml
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.4.0
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4.3.1
+        with:
+          version: v4.3.1
+
+      # `required` in the chart already fails the render on a missing tag,
+      # digest, port, GSA, Cloud SQL instance or host.
+      - name: Lint and render
+        run: |
+          helm lint helm/mini-app-service -f "$VALUES"
+          helm template "${{ matrix.service }}-service" helm/mini-app-service \
+            -n "${{ matrix.service }}" -f "$VALUES" > /dev/null
+
+      - name: Digest is a real sha256
+        run: |
+          d=$(yq '.image.digest' "$VALUES")
+          [[ "$d" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error file=$VALUES::bad image.digest: $d"; exit 1; }

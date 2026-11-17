@@ -1,0 +1,58 @@
+# auth-service on vincent-cluster.
+#   helm upgrade --install auth-service helm/mini-app-service \
+#     -n auth -f helm/values/auth.yaml
+
+# strategy stays at the chart default 1/0: vincent-cluster's node is at
+# 926m/940m requested, so two copies cannot fit and 0/1 would deadlock.
+
+image:
+  repository: asia-southeast1-docker.pkg.dev/vincent-mini-apps-project/auth-repository/auth-service
+  tag: "0.1.2"
+  digest: sha256:3d8abe728c7de3e69400ea7695c8ddc2ac49ff15d319fed3942287af8f947f9c
+
+containerPort: 9999
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+gcpServiceAccount: auth-sql@vincent-mini-apps-project.iam.gserviceaccount.com
+
+cloudSqlProxy:
+  # Shared with recommendations-service.
+  instance: vincent-mini-apps-project:asia-southeast1:recommendations-app-instance
+  resources:
+    requests:
+      cpu: 50m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+# PORT, APP_ENV, DB_HOST, DB_PORT, DB_USER and DB_SSLMODE come from the chart.
+config:
+  DB_NAME: "recommendations-backend"
+
+  # Cloudflare's edge, not the load balancer: the app only uses this to build
+  # URLs it hands a browser.
+  BASE_URL: "https://auth.vincentn.dev"
+
+  # IGNORED BY THE APP, kept only so this file documents the value. config.go
+  # reads auth.google_oauth_redirect_url from the //go:embed-ed production.yaml
+  # and has no environment override. See docs/auth-service/prerequisites.md.
+  GOOGLE_OAUTH_REDIRECT_URL: "https://auth.vincentn.dev/api/v1/auth/google/callback"
+
+  # TODO: the real SPA origin, before login is usable. Doubles as post-login
+  # redirect target AND the only allowed CORS origin.
+  FRONTEND_URL: "http://localhost:5173"
+
+  SESSION_TTL: "12h"
+  SESSION_IDLE_TTL: "30m"
+
+ingress:
+  host: auth.vincentn.dev
+  staticIpName: auth-service-ip

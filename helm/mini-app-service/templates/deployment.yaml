@@ -1,0 +1,123 @@
+{{- $image := required "image.repository is required" .Values.image.repository -}}
+{{- $tag := required "image.tag is required" .Values.image.tag -}}
+{{- $digest := required "image.digest is required" .Values.image.digest -}}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mini-app-service.selectorLabels" . | nindent 4 }}
+    {{- include "mini-app-service.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels:
+      {{- include "mini-app-service.selectorLabels" . | nindent 6 }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: {{ .Values.strategy.maxUnavailable }}
+      maxSurge: {{ .Values.strategy.maxSurge }}
+  template:
+    metadata:
+      labels:
+        {{- include "mini-app-service.selectorLabels" . | nindent 8 }}
+      annotations:
+        # Rolls the pods whenever the ConfigMap's data changes. Kustomize had no
+        # configMapGenerator hash, which is why `make apply-config` needed an
+        # explicit restart; this replaces it. Hashes .data only: the metadata
+        # carries helm.sh/chart, so hashing the whole object would roll every
+        # service on a mere chart version bump.
+        checksum/config: {{ (include (print $.Template.BasePath "/configmap.yaml") . | fromYaml).data | toYaml | sha256sum }}
+    spec:
+      serviceAccountName: {{ .Release.Name }}
+      securityContext:
+        runAsNonRoot: true
+        seccompProfile:
+          type: RuntimeDefault
+
+      # NATIVE sidecar (initContainer + restartPolicy: Always), not an ordinary
+      # container, and load-bearing: every service's main.go log.Fatalf's if the
+      # first DB ping fails, so a plain sidecar loses the startup race and
+      # crashloops. Needs Kubernetes 1.29+.
+      initContainers:
+        - name: cloud-sql-proxy
+          image: {{ .Values.cloudSqlProxy.image }}
+          restartPolicy: Always
+          args:
+            - "--structured-logs"
+            - "--port=5432"
+            # The DB port stays on loopback; only the health server kubelet
+            # probes listens on the pod IP.
+            - "--health-check"
+            - "--http-address=0.0.0.0"
+            - "--http-port=9090"
+            - {{ required "cloudSqlProxy.instance is required" .Values.cloudSqlProxy.instance | quote }}
+          # No --credentials-file: Workload Identity supplies the token via the
+          # bound KSA.
+          securityContext:
+            runAsNonRoot: true
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.cloudSqlProxy.resources | nindent 12 }}
+          # NOT tcpSocket on 5432: kubelet dials the pod IP from outside the
+          # pod's network namespace, and the proxy binds 127.0.0.1 only.
+          startupProbe:
+            httpGet:
+              path: /startup
+              port: 9090
+            periodSeconds: 2
+            failureThreshold: 30
+
+      containers:
+        - name: {{ .Release.Name }}
+          image: "{{ $image }}:{{ $tag }}@{{ $digest }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ required "containerPort is required" .Values.containerPort }}
+          envFrom:
+            - configMapRef:
+                name: {{ .Release.Name }}-config
+            # Created imperatively, never by this chart -- see
+            # docs/helm-migration.md. config.Load() rejects the pod if any of
+            # its four keys is empty.
+            - secretRef:
+                name: {{ .Release.Name }}-secrets
+          securityContext:
+            # runAsUser is deliberately unset: the distroless :nonroot tag
+            # already sets numeric 65532, which is what lets runAsNonRoot be
+            # verified.
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          # /api/v1/health never touches the database, so a slow query cannot
+          # evict a healthy pod -- and a green probe says nothing about the
+          # schema.
+          startupProbe:
+            httpGet:
+              path: /api/v1/health
+              port: http
+            periodSeconds: 3
+            failureThreshold: 20
+          readinessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: http
+            periodSeconds: 10
+            timeoutSeconds: 3
+            failureThreshold: 3
+          livenessProbe:
+            httpGet:
+              path: /api/v1/health
+              port: http
+            periodSeconds: 20
+            timeoutSeconds: 3
+            failureThreshold: 3

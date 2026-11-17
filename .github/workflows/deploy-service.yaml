@@ -1,0 +1,103 @@
+name: Deploy service
+
+# Reusable: deploys ONE service. Called by deploy-<svc>.yaml, which own the
+# triggers. Deliberately not in any caller's path filter -- editing the deploy
+# logic must not redeploy everything; run a caller by hand after changing it.
+on:
+  workflow_call:
+    inputs:
+      service:   # auth | recommendations | league
+        type: string
+        required: true
+      cluster:   # vincent-cluster | league-cluster
+        type: string
+        required: true
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  PROJECT_ID: vincent-mini-apps-project
+  # Zonal clusters: a region here fails to find them.
+  ZONE: asia-southeast1-a
+  WORKLOAD_IDENTITY_PROVIDER: projects/225614846438/locations/global/workloadIdentityPools/github-pool/providers/github-provider
+  # Only cloud-infrastructure@refs/heads/master may impersonate it.
+  SERVICE_ACCOUNT: gke-deployer@vincent-mini-apps-project.iam.gserviceaccount.com
+  CHART: helm/mini-app-service
+
+jobs:
+  deploy:
+    name: Deploy ${{ inputs.service }}-service
+    runs-on: ubuntu-latest
+    environment: production
+    # Serialize deploys of one service; different services run in parallel.
+    concurrency:
+      group: deploy-${{ inputs.service }}
+      cancel-in-progress: false
+    env:
+      NS: ${{ inputs.service }}
+      # The release name is load-bearing: it is the KSA name in the Workload
+      # Identity member ...svc.id.goog[<ns>/<svc>-service].
+      REL: ${{ inputs.service }}-service
+      VALUES: helm/values/${{ inputs.service }}.yaml
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4.4.0
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v2.1.13
+        with:
+          workload_identity_provider: ${{ env.WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ env.SERVICE_ACCOUNT }}
+
+      # The DNS endpoint is authorized by IAM, not source IP. The IP endpoint
+      # only admits one /32, and kubectl from a runner would hang against it.
+      - name: Get GKE credentials
+        uses: google-github-actions/get-gke-credentials@v2.3.5
+        with:
+          cluster_name: ${{ inputs.cluster }}
+          location: ${{ env.ZONE }}
+          project_id: ${{ env.PROJECT_ID }}
+          use_dns_based_endpoint: true
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4.3.1
+        with:
+          version: v4.3.1
+
+      # Catches a mistyped tag, an unpushed image, and a digest copied from
+      # another tag -- before helm touches the cluster.
+      - name: Image tag resolves to the pinned digest
+        run: |
+          repo=$(yq '.image.repository' "$VALUES")
+          tag=$(yq '.image.tag' "$VALUES")
+          want=$(yq '.image.digest' "$VALUES")
+          got=$(gcloud artifacts docker images describe "$repo:$tag" \
+                  --format='value(image_summary.digest)' || true)
+          [ "$got" = "$want" ] || {
+            echo "::error file=$VALUES::$repo:$tag is ${got:-missing}, values file pins $want"; exit 1; }
+
+      # The chart only references these; they are created by hand, never in
+      # git. Missing ones would leave pods in CreateContainerConfigError.
+      - name: Imperative Secrets exist
+        run: kubectl -n "$NS" get secret "$REL-secrets" "$REL-origin-tls"
+
+      - name: Deploy
+        run: |
+          helm upgrade --install "$REL" "$CHART" \
+            -n "$NS" -f "$VALUES" --wait --timeout 5m
+
+      - name: Verify rollout
+        run: kubectl -n "$NS" rollout status "deploy/$REL" --timeout=5m
+
+      - name: Record
+        if: always()
+        run: |
+          {
+            echo "### $REL"
+            echo '```'
+            helm -n "$NS" history "$REL" --max 5 || true
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

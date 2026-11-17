@@ -1,0 +1,54 @@
+# league-service on league-cluster -- its OWN cluster, not vincent-cluster.
+#   helm upgrade --install league-service helm/mini-app-service \
+#     -n league -f helm/values/league.yaml
+
+# 0/1 -- the OPPOSITE of auth and recommendations. league-cluster's node has
+# ~240m free, which fits a surge replica, so rollouts have no gap. Do not
+# "normalise" this back to the chart default.
+strategy:
+  maxUnavailable: 0
+  maxSurge: 1
+
+image:
+  repository: asia-southeast1-docker.pkg.dev/vincent-mini-apps-project/league-repository/league-service
+  tag: "0.5.0"
+  digest: sha256:b15147867e5fabc618d23fee19186df1be28b1d12e758f05eaa3aa0f32e91e6d
+
+containerPort: 9200
+
+gcpServiceAccount: league-sql@vincent-mini-apps-project.iam.gserviceaccount.com
+
+cloudSqlProxy:
+  # league's OWN instance -- NOT the shared recommendations-app-instance.
+  instance: vincent-mini-apps-project:asia-southeast1:league-app-instance
+
+# PORT (from containerPort -- overrides server.port 5001 in the embedded
+# production.yaml), APP_ENV, DB_HOST, DB_PORT, DB_USER and DB_SSLMODE come from
+# the chart.
+config:
+  DB_NAME: "league-backend"
+
+  # DATABASE_URL is deliberately absent: ConnectDatabaseString() PREFERS it over
+  # every DB_* value, so defining it at all silently bypasses the proxy DSN.
+
+  BASE_URL: "https://be.mvip-league.com"
+
+  # TODO: the real SPA origin (league-fe). Doubles as post-login redirect target
+  # and the only allowed CORS origin.
+  FRONTEND_URL: "http://localhost:5174"
+
+  SESSION_TTL: "12h"
+  SESSION_IDLE_TTL: "30m"
+
+  # Empty means any Google account may log in.
+  GOOGLE_ALLOWED_HD: ""
+
+  ENCRYPTION_KEY_VERSION: "1"
+
+  GOOGLE_OAUTH_REDIRECT_URL: "https://be.mvip-league.com/api/v1/auth/google/callback"
+
+ingress:
+  host: be.mvip-league.com
+  # A different cluster AND a different Cloudflare zone from the other two, so
+  # its own global address and its own Origin cert (league-service-origin-tls).
+  staticIpName: league-service-ip
