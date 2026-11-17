@@ -1,0 +1,33 @@
+# recommendations-service on vincent-cluster.
+#   helm upgrade --install recommendations-service helm/mini-app-service \
+#     -n recommendations -f helm/values/recommendations.yaml
+
+# strategy, resources and cloudSqlProxy.resources stay at the chart defaults:
+# 1/0 because two copies do not fit on the shared node, and 50m + 25m because
+# that is what fit the 87m that was free when this service arrived.
+
+image:
+  repository: asia-southeast1-docker.pkg.dev/vincent-mini-apps-project/recommendations-repository/recommendations-service
+  tag: "0.1.2"
+  digest: sha256:fcac935dcfd25d653663b7dbbfd10fb32cbd51d961ebac4e26a24d41cf721203
+
+containerPort: 9998
+
+gcpServiceAccount: recommendations-sql@vincent-mini-apps-project.iam.gserviceaccount.com
+
+cloudSqlProxy:
+  instance: vincent-mini-apps-project:asia-southeast1:recommendations-app-instance
+
+# PORT, APP_ENV, DB_HOST, DB_PORT, DB_USER and DB_SSLMODE come from the chart.
+config:
+  DB_NAME: "recommendations-backend"
+
+  BASE_URL: "https://recommendations-be.vincentn.dev"
+
+  # TODO: the real SPA origin. The ONLY allowed CORS origin (middleware/cors.go,
+  # AllowCredentials: true), so a wrong value breaks every browser XHR.
+  FRONTEND_URL: "http://localhost:5173"
+
+ingress:
+  host: recommendations-be.vincentn.dev
+  staticIpName: recommendations-service-ip

@@ -1,0 +1,71 @@
+# Defaults shared by every service. Per-service values live in
+# helm/values/<svc>.yaml; anything marked "required" has no default and the
+# render fails without it.
+#
+# The RELEASE NAME is the name of every object (Deployment, Service, KSA,
+# ConfigMap, Ingress) and is load-bearing: the Workload Identity member is
+# <project>.svc.id.goog[<namespace>/<release>], and the Secrets this chart reads
+# are <release>-secrets and <release>-origin-tls. Always install as
+# `<svc>-service`, never a shortened name.
+
+# One spot e2-medium node per cluster means one replica.
+replicas: 1
+
+# 1/0 is the safe default for a full node: two copies of the pod do not fit, and
+# 0/1 deadlocks there. Override to 0/1 only where the node has room for a surge.
+strategy:
+  maxUnavailable: 1
+  maxSurge: 0
+
+image:
+  repository: ""  # required
+  tag: ""         # required
+  # required. Pinned by digest, not just tag: a moved tag makes
+  # `helm rollback` / `kubectl rollout undo` meaningless.
+  digest: ""
+  pullPolicy: IfNotPresent
+
+containerPort: null  # required
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 500m
+    memory: 256Mi
+
+# required. GSA holding roles/cloudsql.client; bound to the KSA via Workload
+# Identity.
+gcpServiceAccount: ""
+
+cloudSqlProxy:
+  image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.14.1
+  instance: ""  # required, <project>:<region>:<instance>
+  resources:
+    requests:
+      cpu: 25m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 128Mi
+
+# Non-secret env, rendered into the ConfigMap. Every value must be a quoted
+# string. PORT is not set here: the chart renders it from containerPort.
+# Per-service files add their keys; Helm deep-merges this map, so the defaults
+# below apply unless a service overrides one.
+config:
+  APP_ENV: "production"
+
+  # 127.0.0.1 is the cloud-sql-proxy sidecar, not Cloud SQL. sslmode=disable is
+  # correct and not a weakening: this hop is loopback inside the pod, and the
+  # proxy makes the TLS connection to Cloud SQL itself. DB_PORT must match the
+  # proxy's --port in templates/deployment.yaml.
+  DB_HOST: "127.0.0.1"
+  DB_PORT: "5432"
+  DB_USER: "postgres"
+  DB_SSLMODE: "disable"
+
+ingress:
+  host: ""          # required
+  staticIpName: ""  # required, a reserved GLOBAL address

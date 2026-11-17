@@ -1,0 +1,36 @@
+{{- $host := required "ingress.host is required" .Values.ingress.host -}}
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mini-app-service.labels" . | nindent 4 }}
+  annotations:
+    # Deprecated upstream, and still the ONLY way to select a GKE Ingress:
+    # ingress-gce ignores spec.ingressClassName outright.
+    kubernetes.io/ingress.class: "gce"
+    # A reserved GLOBAL address, one per Ingress -- a global address backs
+    # exactly one forwarding rule.
+    kubernetes.io/ingress.global-static-ip-name: {{ required "ingress.staticIpName is required" .Values.ingress.staticIpName | quote }}
+    # Cloudflare in Full (strict) only ever dials 443.
+    kubernetes.io/ingress.allow-http: "false"
+spec:
+  tls:
+    # Cloudflare Origin CA cert, created imperatively so the key stays out of
+    # git -- never by this chart.
+    - secretName: {{ .Release.Name }}-origin-tls
+      hosts:
+        - {{ $host }}
+  rules:
+    # Host-scoped: a request to the raw LB IP gets the default backend's 404.
+    - host: {{ $host }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ .Release.Name }}
+                port:
+                  name: http

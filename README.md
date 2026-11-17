@@ -27,6 +27,8 @@ Shared across all three services — read these first:
 | **[gke-parameters.md](docs/gke-parameters.md)** | Every GKE parameter for all three services in one set of tables: project, **both clusters**, Cloud SQL, identity, networking, resources, probes, sidecar, env. Start here. |
 | **[troubleshooting.md](docs/troubleshooting.md)** | Every failure mode, in the order a deploy hits them. Organised by the error in front of you. |
 | **[edge-architecture.md](docs/edge-architecture.md)** | How Cloudflare + GCE Ingress + TLS fit together, and how to put a new service behind the edge. |
+| **[helm-migration.md](docs/helm-migration.md)** | Step-by-step move from `k8s/` (Kustomize) to the shared `helm/mini-app-service` chart, adopting live objects without recreating them. |
+| **[deployment-workflow-context.md](deployment-workflow-context.md)** | Target CI/CD: backend repos only build images; a merged values change here deploys. Access prerequisites, workflows, rollout plan. |
 
 Standalone, and not specific to this repo — safe to share or read on its own:
 

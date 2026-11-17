@@ -1,0 +1,8 @@
+apiVersion: v2
+name: mini-app-service
+description: >-
+  One Go service of my-mini-apps on GKE: Deployment with a cloud-sql-proxy
+  native sidecar, ClusterIP Service, GCE Ingress behind Cloudflare. Installed
+  once per service with helm/values/<svc>.yaml.
+type: application
+version: 0.1.0

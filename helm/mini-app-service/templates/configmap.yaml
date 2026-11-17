@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-config
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mini-app-service.labels" . | nindent 4 }}
+data:
+  # Rendered from containerPort so the two cannot drift: the app listens on
+  # PORT (config.go reads it last, over the embedded production.yaml), and the
+  # probes and Service target containerPort.
+  PORT: {{ required "containerPort is required" .Values.containerPort | quote }}
+  {{- range $key, $value := .Values.config }}
+  {{- if eq $key "PORT" }}
+  {{- fail "config.PORT is set from containerPort; remove it from config" }}
+  {{- end }}
+  {{- if not (kindIs "string" $value) }}
+  {{- fail (printf "config.%s must be a quoted string (an unquoted number renders as e.g. \"1e+06\")" $key) }}
+  {{- end }}
+  {{ $key }}: {{ $value | quote }}
+  {{- end }}
