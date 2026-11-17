@@ -1,19 +1,26 @@
-# Deploy helpers for the k8s manifests in this repo.
-# Images are built in the service repos (../recommendations-be, ../auth-be,
-# ../../league/league-be).
+# Deploy helpers for the Helm chart in this repo (helm/mini-app-service, one
+# values file per service). Images are built in the service repos
+# (../recommendations-be, ../auth-be, ../league/league-be).
 #
 #   make apply              # recommendations
 #   make apply SVC=auth     # auth-service
 #   make apply SVC=league   # league-service
+#
+# Once CI deploys (.github/workflows/deploy-*.yaml), merging to master is the
+# normal path; `make apply` is for a laptop deploy or an emergency.
 
 SVC ?= recommendations
 
 NS     := $(SVC)
+# Also the Helm release name -- load-bearing: it is the KSA name in the
+# Workload Identity member ...svc.id.goog[<ns>/<svc>-service].
 DEPLOY := $(SVC)-service
-DIR    := k8s/$(SVC)-service
+CHART  := helm/mini-app-service
+VALUES := helm/values/$(SVC).yaml
 KNS    := kubectl -n $(NS)
+HELM   := helm -n $(NS)
 
-ifeq ($(wildcard $(DIR)/kustomization.yaml),)
+ifeq ($(wildcard $(VALUES)),)
   $(error unknown SVC "$(SVC)" -- try recommendations, auth or league)
 endif
 
@@ -51,17 +58,16 @@ check-context:
 	     exit 1;; \
 	esac
 
-.PHONY: apply
-apply: check-context ## Apply manifests and wait
-	kubectl apply -k $(DIR)
-	$(KNS) rollout status deploy/$(DEPLOY) --timeout=5m
+# kubectl diff exits 1 whenever there IS a difference, hence `|| true`.
+.PHONY: diff
+diff: check-context ## Preview changes against the live cluster
+	helm template $(DEPLOY) $(CHART) -n $(NS) -f $(VALUES) | kubectl diff -f - || true
 
-# No configMapGenerator, so the ConfigMap has no name hash: editing it does not
-# roll the Deployment. The restart is required, not a convenience.
-.PHONY: apply-config
-apply-config: check-context ## Apply after a configmap.yaml change
-	kubectl apply -k $(DIR)
-	$(KNS) rollout restart deploy/$(DEPLOY)
+# No separate apply-config any more: the chart's checksum/config annotation
+# rolls the pods whenever the rendered ConfigMap data changes.
+.PHONY: apply
+apply: check-context ## helm upgrade --install and wait
+	$(HELM) upgrade --install $(DEPLOY) $(CHART) -f $(VALUES) --wait --timeout 5m
 	$(KNS) rollout status deploy/$(DEPLOY) --timeout=5m
 
 .PHONY: restart
@@ -73,10 +79,17 @@ restart: check-context ## Bounce the pods
 status: check-context ## Wait on the current rollout
 	$(KNS) rollout status deploy/$(DEPLOY) --timeout=5m
 
+# helm rollback, not `kubectl rollout undo`: it also restores the ConfigMap and
+# keeps Helm's record true. Follow it with a `git revert` of the values change,
+# or the next CI deploy re-applies it.
 .PHONY: rollback
-rollback: check-context ## Undo the last rollout
-	$(KNS) rollout undo deploy/$(DEPLOY)
+rollback: check-context ## Roll back to the previous Helm revision
+	$(HELM) rollback $(DEPLOY) --wait --timeout 5m
 	$(KNS) rollout status deploy/$(DEPLOY) --timeout=5m
+
+.PHONY: history
+history: check-context ## Helm revisions for this service
+	$(HELM) history $(DEPLOY)
 
 .PHONY: ps
 ps: check-context ## Show pods
