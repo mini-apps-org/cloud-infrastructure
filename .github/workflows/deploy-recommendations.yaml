@@ -1,0 +1,22 @@
+name: Deploy recommendations-service
+
+on:
+  push:
+    branches:
+      - master
+    paths:
+      - "helm/values/recommendations.yaml"
+      - "helm/mini-app-service/**"
+  # Re-run by hand, e.g. after changing deploy-service.yaml. Only from master:
+  # the deployer binding rejects any other ref.
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    uses: ./.github/workflows/deploy-service.yaml
+    with:
+      service: recommendations
+      cluster: vincent-cluster
+    permissions:
+      contents: read
+      id-token: write
