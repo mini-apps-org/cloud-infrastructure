@@ -52,3 +52,8 @@ ingress:
   # A different cluster AND a different Cloudflare zone from the other two, so
   # its own global address and its own Origin cert (league-service-origin-tls).
   staticIpName: league-service-ip
+
+# Scraped by GMP for the Grafana dashboard -- see
+# docs/league-service/grafana.md. Turning this off stops the per-sample bill.
+podMonitoring:
+  enabled: true

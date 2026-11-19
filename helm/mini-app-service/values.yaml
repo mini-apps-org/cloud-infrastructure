@@ -69,3 +69,13 @@ config:
 ingress:
   host: ""          # required
   staticIpName: ""  # required, a reserved GLOBAL address
+
+# Google Managed Prometheus scrape of /metrics. Off by default: GMP bills per
+# sample ingested, so a service opts in from its own values file.
+podMonitoring:
+  enabled: false
+  interval: 30s
+
+# Separate /metrics port, kept out of the Service so the Ingress can't reach it.
+# Unset, PodMonitoring scrapes `http`. Not 9090: the cloud-sql-proxy uses it.
+metricsPort: null

@@ -10,9 +10,15 @@ data:
   # PORT (config.go reads it last, over the embedded production.yaml), and the
   # probes and Service target containerPort.
   PORT: {{ required "containerPort is required" .Values.containerPort | quote }}
+  {{- with .Values.metricsPort }}
+  METRICS_PORT: {{ . | quote }}
+  {{- end }}
   {{- range $key, $value := .Values.config }}
   {{- if eq $key "PORT" }}
   {{- fail "config.PORT is set from containerPort; remove it from config" }}
+  {{- end }}
+  {{- if eq $key "METRICS_PORT" }}
+  {{- fail "config.METRICS_PORT is set from metricsPort; remove it from config" }}
   {{- end }}
   {{- if not (kindIs "string" $value) }}
   {{- fail (printf "config.%s must be a quoted string (an unquoted number renders as e.g. \"1e+06\")" $key) }}
