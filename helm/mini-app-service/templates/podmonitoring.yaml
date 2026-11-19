@@ -1,0 +1,19 @@
+{{- if .Values.podMonitoring.enabled }}
+# Google Managed Prometheus scrape of /metrics (the default path) on the
+# `metrics` port when metricsPort is set, else on `http`. Selector and port
+# reuse the Deployment's, so the two cannot drift.
+apiVersion: monitoring.googleapis.com/v1
+kind: PodMonitoring
+metadata:
+  name: {{ .Release.Name }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "mini-app-service.labels" . | nindent 4 }}
+spec:
+  selector:
+    matchLabels:
+      {{- include "mini-app-service.selectorLabels" . | nindent 6 }}
+  endpoints:
+    - port: {{ if .Values.metricsPort }}metrics{{ else }}http{{ end }}
+      interval: {{ .Values.podMonitoring.interval }}
+{{- end }}

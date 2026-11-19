@@ -80,6 +80,10 @@ spec:
           ports:
             - name: http
               containerPort: {{ required "containerPort is required" .Values.containerPort }}
+            {{- with .Values.metricsPort }}
+            - name: metrics
+              containerPort: {{ . }}
+            {{- end }}
           envFrom:
             - configMapRef:
                 name: {{ .Release.Name }}-config

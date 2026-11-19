@@ -1,0 +1,43 @@
+# grafana/grafana on league-cluster -- docs/league-service/grafana.md.
+# Keep every setting here: `helm upgrade -f` drops values passed only with --set.
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 300m
+    memory: 256Mi
+
+# Dashboards, data sources and tokens live in Grafana's database on this disk.
+persistence:
+  enabled: true
+  size: 1Gi
+
+# Public URL behind Cloudflare Tunnel + Access -- docs/league-service/grafana-public-access.md.
+grafana.ini:
+  server:
+    domain: monitoring.mvip-league.com
+    root_url: https://monitoring.mvip-league.com
+  security:
+    cookie_secure: true
+
+# Workload Identity: lets the Cloud Logging plugin read logs without a key file.
+serviceAccount:
+  annotations:
+    iam.gke.io/gcp-service-account: grafana-logs-reader@vincent-mini-apps-project.iam.gserviceaccount.com
+
+plugins:
+  - googlecloud-logging-datasource 1.8.1
+
+datasources:
+  datasources.yaml:
+    apiVersion: 1
+    datasources:
+      - name: Cloud Logging
+        uid: cloud-logging
+        type: googlecloud-logging-datasource
+        access: proxy
+        jsonData:
+          authenticationType: gce
+          defaultProject: vincent-mini-apps-project
