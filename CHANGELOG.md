@@ -1,11 +1,31 @@
-# 2026-11-XX
+# 2026-11-20
 
-- [#TBD](https://github.com/mini-apps-org/cloud-infrastructure./pull/PR4)
+- [PR4](https://github.com/mini-apps-org/cloud-infrastructure/pull/4)
+  - chore(k8s): remove the Kustomize manifests in `k8s/` — the Helm chart replaces them; the last commit with `k8s/` is `1f2535c`
+
+# 2026-11-19
+
+- [PR3](https://github.com/mini-apps-org/cloud-infrastructure/pull/3)
+  - feat(helm): opt-in `podMonitoring` lets Google Managed Prometheus scrape a service's `/metrics`
+  - feat(helm): optional `metricsPort` serves `/metrics` on its own port, out of reach of the Ingress
+  - feat(league): turn on metrics scraping for league-service
+  - feat(monitoring): Grafana on `league-cluster`, public at `monitoring.mvip-league.com` behind Cloudflare Access
+  - docs: add Grafana setup and public-access guides for league
+- feat(league): deploy tag `0.7.0`
+
+# 2026-11-18
+
+- [PR2](https://github.com/mini-apps-org/cloud-infrastructure/pull/2)
   - feat(helm): one shared chart `helm/mini-app-service` with per-service values, plus a migration guide
   - fix(deploy): `quick-deploy.sh` targets the `mini-apps-org` repos again; add `setup-cd-access.sh` for CD access
   - feat(ci-cd): validate the chart on PRs; deploy a service when its values change on `master`
   - docs: add `deployment-workflow-context.md` — how an image goes from build to deploy
   - chore: `make apply` / `rollback` / `diff` run Helm; `apply-config` is gone
+
+# 2026-11-17
+
+- feat(league): deploy tag `0.5.1`
+- feat(league): deploy tag `0.5.3`
 
 # 2026-11-07
 
