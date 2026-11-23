@@ -11,8 +11,8 @@ strategy:
 
 image:
   repository: asia-southeast1-docker.pkg.dev/vincent-mini-apps-project/league-repository/league-service
-  tag: "0.7.0"
-  digest: sha256:10eaece979f0d55656693029456958f8f3dfa72acc9a19608cf8206dee7f0886
+  tag: "0.9.0"
+  digest: sha256:b08139bf46518e1b7e645a8e2ec916092d5c1b37e617e54cb5b09d6a14d2fbf5
 
 containerPort: 9200
 
