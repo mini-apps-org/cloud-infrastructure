@@ -1,0 +1,150 @@
+# grafana/alloy on league-cluster: ships league's logs to Grafana Cloud Loki --
+# docs/league-service/grafana-loki.md.
+
+controller:
+  # -- One pod reading logs through the Kubernetes API: no hostPath mounts, no DaemonSet.
+  type: deployment
+  replicas: 1
+
+rbac:
+  # -- Read-only access to pods and their logs in `league` only.
+  # Keep in sync with `namespaces.names` in the config below: a namespace missing
+  # here fails with 403; one missing there is silently skipped.
+  namespaces: ["league"]
+  rules:
+    - apiGroups: [""]
+      resources: ["pods", "pods/log"]
+      verbs: ["get", "list", "watch"]
+  clusterRules: []
+
+configReloader:
+  # -- Saves 50Mi on a node that's short of memory. After changing the config below,
+  # run `kubectl -n monitoring rollout restart deploy/alloy`.
+  enabled: false
+
+alloy:
+  # -- Resource requests and limits
+  resources:
+    requests:
+      cpu: 20m
+      memory: 64Mi
+    limits:
+      cpu: 200m
+      memory: 192Mi
+
+  # -- The security context for the Alloy container
+  securityContext:
+    capabilities:
+      drop:
+        - ALL
+    allowPrivilegeEscalation: false
+
+  # -- LOKI_URL, LOKI_USERNAME, LOKI_PASSWORD -- created by hand, never committed.
+  envFrom:
+    - secretRef:
+        name: alloy-loki
+
+  # -- Alloy config, read top to bottom:
+  # discover pods -> relabel -> read logs -> process lines -> push to Loki.
+  configMap:
+    content: |
+      // ---- Discovery: pods in `league` ----------------------------------------
+      discovery.kubernetes "pods" {
+        role = "pod"
+        namespaces {
+          // Same list as rbac.namespaces. Pods in other clusters need their own Alloy.
+          names = ["league"]
+        }
+      }
+
+      // ---- Relabel: turn pod metadata into stream labels ------------------------
+      discovery.relabel "pods" {
+        targets = discovery.kubernetes.pods.targets
+
+        // app: app.kubernetes.io/name, else `app` label, else controller name
+        // without its hash, else pod name.
+        rule {
+          source_labels = ["__meta_kubernetes_pod_controller_name"]
+          regex         = "([0-9a-z-.]+?)(-[0-9a-f]{8,10})?"
+          target_label  = "__tmp_controller_name"
+        }
+        rule {
+          source_labels = [
+            "__meta_kubernetes_pod_label_app_kubernetes_io_name",
+            "__meta_kubernetes_pod_label_app",
+            "__tmp_controller_name",
+            "__meta_kubernetes_pod_name",
+          ]
+          regex        = "^;*([^;]+)(;.*)?$"
+          target_label = "app"
+        }
+        rule {
+          source_labels = [
+            "__meta_kubernetes_pod_label_app_kubernetes_io_instance",
+            "__meta_kubernetes_pod_label_instance",
+          ]
+          regex        = "^;*([^;]+)(;.*)?$"
+          target_label = "instance"
+        }
+        rule {
+          source_labels = [
+            "__meta_kubernetes_pod_label_app_kubernetes_io_component",
+            "__meta_kubernetes_pod_label_component",
+          ]
+          regex        = "^;*([^;]+)(;.*)?$"
+          target_label = "component"
+        }
+
+        rule {
+          source_labels = ["__meta_kubernetes_pod_node_name"]
+          target_label  = "node_name"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_namespace"]
+          target_label  = "namespace"
+        }
+        // job = <namespace>/<app>
+        rule {
+          source_labels = ["namespace", "app"]
+          separator     = "/"
+          target_label  = "job"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_name"]
+          target_label  = "pod"
+        }
+        rule {
+          source_labels = ["__meta_kubernetes_pod_container_name"]
+          target_label  = "container"
+        }
+      }
+
+      // ---- Source: read logs through the Kubernetes API -------------------------
+      loki.source.kubernetes "pods" {
+        targets    = discovery.relabel.pods.output
+        forward_to = [loki.process.app_logs.receiver]
+      }
+
+      // ---- Process: `level` becomes a label (few values); every other field
+      // stays in the line and is parsed at query time with `| json`.
+      loki.process "app_logs" {
+        stage.json {
+          expressions = { level = "level" }
+        }
+        stage.labels {
+          values = { level = "" }
+        }
+        forward_to = [loki.write.grafana_cloud.receiver]
+      }
+
+      // ---- Write: push to Grafana Cloud Loki ------------------------------------
+      loki.write "grafana_cloud" {
+        endpoint {
+          url = sys.env("LOKI_URL")
+          basic_auth {
+            username = sys.env("LOKI_USERNAME")
+            password = sys.env("LOKI_PASSWORD")
+          }
+        }
+        external_labels = { cluster = "league-cluster" }
+      }
