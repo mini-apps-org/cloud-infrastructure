@@ -1,5 +1,6 @@
 # 2026-11-25
 
+- feat(league): deploy tag `0.10.1`
 - feat(monitoring): ship league's logs to Grafana Cloud Loki with Alloy, queryable in Grafana as `league-loki`
 - refactor(make): `make health` always goes through the public `HEALTH_URL` — the LoadBalancer-IP fallback is gone
 - docs: rewrite the auth and recommendations deploy guides for Helm (`make diff` / `apply` / `rollback`)
