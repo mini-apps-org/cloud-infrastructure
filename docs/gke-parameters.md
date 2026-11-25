@@ -9,7 +9,7 @@ Three services, same shape, different values — and, since league moved to a cl
 | State | live | live | **reserved, not deployed** |
 | Cluster | `vincent-cluster` | `vincent-cluster` | `league-cluster` **(to create)** |
 | Source repo | `../auth-be` | `../recommendations-be` | `../../league/league-be` |
-| Manifests | `k8s/auth-service/` | `k8s/recommendations-service/` | `k8s/league-service/` |
+| Values | `helm/values/auth.yaml` | `helm/values/recommendations.yaml` | `helm/values/league.yaml` |
 
 ---
 
@@ -177,7 +177,7 @@ cannot schedule until the old one goes. See
 
 This is the entire reason league was blocked before and is not now: the CPU it needed was being
 spent on the other two services, not on anything league does. With a node of its own the surge
-replica fits, so `deployment.yaml` uses **`maxUnavailable: 0` / `maxSurge: 1`** and a rollout has
+replica fits, so `helm/values/league.yaml` sets **`maxUnavailable: 0` / `maxSurge: 1`** and a rollout has
 no gap in service.
 
 **The three services therefore disagree on this field on purpose.** `1/0` on the shared cluster is
@@ -268,7 +268,7 @@ route uses it. Placeholders are mandatory.
 `ENCRYPTION_KEY` seals live session cookies. **Store it in a password manager when you generate
 it** — changing it logs everyone out and no fallback key is read.
 
-No Secret appears in any `kustomization.yaml`, deliberately.
+No Secret appears in the chart or any values file, deliberately.
 
 ---
 

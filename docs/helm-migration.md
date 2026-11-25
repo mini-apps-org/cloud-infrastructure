@@ -1,9 +1,14 @@
 # Migrating from Kustomize to Helm
 
-How to move all three services from `k8s/<svc>-service/` (plain YAML + Kustomize, applied with
-`kubectl apply -k`) to one shared Helm chart, **without recreating anything that is live**.
+How to hand a service that was deployed with `kubectl apply -k` (the old `k8s/<svc>-service/`
+plain YAML + Kustomize) to the shared Helm chart, **without recreating anything that is live**.
 
-Read §1–§2 once, then do §3 per service, then §4 once.
+| Service | State |
+| --- | --- |
+| `league` | ✅ On Helm (release `league-service`) |
+| `auth`, `recommendations` | ⏳ Still `kubectl`-applied — do §3 for each |
+
+Read §1–§2 once, then do §3 per service. §4 records the tooling cutover, already done.
 
 ---
 
@@ -240,106 +245,36 @@ Then repeat §3 for the next service.
 | Situation | Do this |
 | --- | --- |
 | A later `helm upgrade` broke the service | `helm -n $NS rollback $REL` (to the previous revision). Use this instead of `kubectl rollout undo`, which rolls back the pods but leaves Helm's record pointing at the bad revision. Once CD is enabled, follow it with a `git revert` of the values change, or the next deploy re-applies it. |
-| You want to abandon Helm for this service and go back to Kustomize | Delete only Helm's **record**, never the objects: `kubectl -n $NS delete secret -l owner=helm,name=$REL`. Then restore the manifests from before the cutover (`git checkout 3b5c115 -- k8s/$SVC-service`, the last commit with `k8s/`) and `kubectl apply -k k8s/$SVC-service` works as before. |
+| You want to abandon Helm for this service and go back to Kustomize | Delete only Helm's **record**, never the objects: `kubectl -n $NS delete secret -l owner=helm,name=$REL`. Then restore the manifests from before the cutover (`git checkout 1f2535c -- k8s/$SVC-service`, the last commit with `k8s/`) and `kubectl apply -k k8s/$SVC-service` works as before. |
 | **Never** | `helm uninstall $REL` on a live service to "undo" the migration. It deletes the Deployment, Service and Ingress it adopted — a full outage plus the Ingress losing its load balancer. |
 
 ---
 
-## 4. Cut over the tooling (once, after all three are on Helm)
+## 4. Tooling cutover — done
 
-**Already made in the `feat/config-helm` branch** — 4.1–4.3 below record what changed. The
-ordering rule still applies to *merging* it: do §3 for all three services first. §3 itself needs
-nothing from `k8s/` or the old Makefile (only `kubectl` and `helm`), so it can run from this
-branch before merge.
+The Makefile, `cmd/quick-deploy.sh` and the deploy workflows already run Helm only, and `k8s/`
+is deleted — the last commit that still has it is `1f2535c`. §3 needs neither: it uses only
+`kubectl` and `helm`.
 
-Until the cutover, `kubectl apply -k` still works, so the two paths can coexist during migration.
-Afterwards Helm must be the **only** writer; a stray `kubectl apply -k` would be overwritten on
-the next `helm upgrade` and make `helm rollback` lie.
+The cutover landed before `auth` and `recommendations` were adopted, so for those two:
 
-### 4.1 Makefile
-
-Replace the Kustomize-specific parts. `DEPLOY` already equals the release name.
-
-```make
-CHART  := helm/mini-app-service
-VALUES := helm/values/$(SVC).yaml
-HELM   := helm -n $(NS)
-
-ifeq ($(wildcard $(VALUES)),)
-  $(error unknown SVC "$(SVC)" -- try recommendations, auth or league)
-endif
-
-.PHONY: diff
-diff: check-context ## Preview changes against the live cluster
-	helm template $(DEPLOY) $(CHART) -n $(NS) -f $(VALUES) | kubectl diff -f - || true
-
-.PHONY: apply
-apply: check-context ## helm upgrade --install and wait
-	$(HELM) upgrade --install $(DEPLOY) $(CHART) -f $(VALUES) --wait --timeout 5m
-	$(KNS) rollout status deploy/$(DEPLOY) --timeout=5m
-
-.PHONY: rollback
-rollback: check-context ## Roll back to the previous Helm revision
-	$(HELM) rollback $(DEPLOY) --wait --timeout 5m
-
-.PHONY: history
-history: check-context ## Helm revisions for this service
-	$(HELM) history $(DEPLOY)
-```
-
-- Delete `DIR`, and the `apply-config` target — `checksum/config` makes `apply` roll pods on a
-  config change by itself.
-- Keep `check-context`, `restart`, `status`, `ps`, `logs`, `logs-proxy`, `events`, `health`
-  unchanged; they talk to kubectl, not to the manifests.
-- (`|| true` on `diff`: `kubectl diff` exits 1 whenever there *is* a difference.)
-
-### 4.2 `cmd/quick-deploy.sh`
-
-Replace these two lines in step 7:
-
-```bash
-kubectl apply -f "k8s/${NAME_SERVICE}/namespace.yaml"
-...
-kubectl apply -k "k8s/${NAME_SERVICE}"
-```
-
-with a namespace that is not Helm-owned, and a Helm install:
-
-```bash
-kubectl create namespace "$NAMESPACE_SERVICE" --dry-run=client -o yaml | kubectl apply -f -
-...
-helm upgrade --install "$NAME_SERVICE" helm/mini-app-service \
-    -n "$NAMESPACE_SERVICE" -f "helm/values/${NAMESPACE_SERVICE}.yaml"
-```
-
-The `kubectl annotate serviceaccount … iam.gke.io/gcp-service-account` line after it can go: the
-chart already sets that annotation from `gcpServiceAccount`, and Helm would revert any drift anyway.
-
-The same change moved the OIDC provider's condition and mapping into `cmd/wif-config.sh`, shared
-with `cmd/setup-cd-access.sh`, and corrected the repository owner to `mini-apps-org` — the old
-inline `tanvinhnguyen2504/…` condition would have overwritten the live one and broken every
-image build.
-
-### 4.3 Remove the Kustomize tree
-
-`k8s/` is deleted. Every reference to it was updated: `README.md` (table, Layout, Quick reference,
-the old "Plain YAML + Kustomize, not Helm" paragraph), `docs/gke-parameters.md`,
-`docs/troubleshooting.md`, and each service's `prerequisites.md` / `deploy.md` (`kubectl apply -k`
-→ `make apply`, `kubectl kustomize` → `helm template` / `make diff`, `rollout undo` →
-`make rollback`). The last commit that still has `k8s/` is `3b5c115`.
+- `make apply` and the deploy workflow fail until §3.4 is done — Helm refuses to take over
+  objects it doesn't own.
+- Helm must be the **only** writer once adopted. Don't `kubectl apply` a restored copy of
+  `k8s/` on top: the next `helm upgrade` would overwrite it and `helm rollback` would lie.
 
 ---
 
 ## 5. Day-2: how common changes look now
 
-| Task | Before (Kustomize) | After (Helm) |
-| --- | --- | --- |
-| Ship a new image | Edit image line in `k8s/<svc>/deployment.yaml`, `make apply` | Edit `image.tag` + `image.digest` in `helm/values/<svc>.yaml`, `make diff`, `make apply` |
-| Change an env value | Edit `configmap.yaml`, `make apply-config` (manual restart) | Edit `config:` in the values file, `make apply` (rolls automatically) |
-| Undo a bad deploy | `make rollback` (`kubectl rollout undo`) | `make rollback` (`helm rollback`, also restores the ConfigMap) |
-| See what is deployed | Read the YAML and hope it was applied | `helm -n <ns> get values <svc>-service` / `make history` |
-| Change something for all three services (probe, proxy version, securityContext) | Edit three `deployment.yaml` files | Edit the template or `values.yaml` once |
-| Add a fourth service | Copy seven files, rename everything | Add `helm/values/<svc>.yaml`, create its Secrets, `make apply SVC=<svc>` |
+| Task | How |
+| --- | --- |
+| Ship a new image | Edit `image.tag` + `image.digest` in `helm/values/<svc>.yaml`, `make diff`, `make apply` |
+| Change an env value | Edit `config:` in the values file, `make apply` (rolls automatically) |
+| Undo a bad deploy | `make rollback` (`helm rollback`, also restores the ConfigMap) |
+| See what is deployed | `helm -n <ns> get values <svc>-service` / `make history` |
+| Change something for all three services (probe, proxy version, securityContext) | Edit the template or `values.yaml` once |
+| Add a fourth service | Add `helm/values/<svc>.yaml`, create its Secrets, `make apply SVC=<svc>` |
 
 ### Next step: deploy from CI
 

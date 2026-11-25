@@ -77,14 +77,15 @@ Values are in [gke-parameters.md](./gke-parameters.md).
 
 ---
 
-## Phase 2 — Rendering and applying the manifests
+## Phase 2 — Rendering and applying the chart
 
-- [ ] `kubectl apply --dry-run=server` fails with `namespaces "<svc>" not found` → not a bug.
-      Server-side dry-run never persists the Namespace, so every namespaced object in the bundle
-      validates against a namespace that does not exist. Render client-side instead:
-      `kubectl kustomize k8s/<svc>-service`
-- [ ] Kustomize labels leak into the selector → `includeSelectors` must stay `false`;
-      `selector.matchLabels` is immutable after creation.
+- [ ] `make diff` fails with `namespaces "<svc>" not found` → the namespace is created by hand,
+      not by the chart. Create it (and its Secrets) first. To render without a cluster:
+      `helm template <svc>-service helm/mini-app-service -n <svc> -f helm/values/<svc>.yaml`
+- [ ] `make apply` fails with `invalid ownership metadata` → the objects were created by
+      `kubectl apply -k` and Helm doesn't own them. Adopt them: [helm-migration.md §3.4](helm-migration.md).
+- [ ] Labels leak into the selector → `mini-app-service.selectorLabels` in `_helpers.tpl` must stay
+      exactly `app: <name>`; `selector.matchLabels` is immutable after creation.
 - [ ] A selector change is rejected → the Deployment must be deleted and recreated, not patched.
 
 ---
@@ -125,7 +126,7 @@ Values are in [gke-parameters.md](./gke-parameters.md).
 - [ ] Creating the Secret does not immediately fix the pod → the container is in a backoff timer.
       Force it: `make restart SVC=<svc>`
 - [ ] `ImagePullBackOff` with `manifest unknown` / `name unknown` → the repo, tag or digest in
-      `deployment.yaml` does not exist.
+      `helm/values/<svc>.yaml` does not exist.
       `gcloud artifacts docker images list …/<svc>-repository --include-tags`
 - [ ] `ImagePullBackOff` with `denied` / `unauthorized` / `downloadArtifacts` → confirm the repo is
       in the cluster's region and the image path has no typo **before** touching IAM. Then grant
@@ -287,18 +288,17 @@ Values are in [gke-parameters.md](./gke-parameters.md).
 
 ## Phase 11 — Changes that appear to do nothing
 
-- [ ] A `configmap.yaml` edit has no effect → there is no `configMapGenerator`, so the ConfigMap
-      has no name hash, so the pod template does not change, so no rollout triggers and the running
-      pod keeps its old environment. Env vars never hot-reload; a pod replacement is required
-      **every time**: `make apply-config SVC=<svc>`
-- [ ] A Secret edit has no effect → same mechanism. Replace the Secret, then
-      `make restart SVC=<svc>`.
+- [ ] A `config:` edit has no effect → it wasn't applied. The chart's `checksum/config` annotation
+      rolls the pods on any ConfigMap data change, but only through `make apply` (or the deploy
+      workflow); editing the live ConfigMap with `kubectl` changes nothing in the pod template.
+- [ ] A Secret edit has no effect → Secrets aren't in the chart, so nothing rolls the pods. Replace
+      the Secret, then `make restart SVC=<svc>`.
 - [ ] Check what actually reached the container:
       `kubectl -n <svc> exec deploy/<svc>-service -c <svc>-service -- env | sort`
       These images are distroless, so this will fail (no shell, no `env`) — compare the ConfigMap
       against the pod's start time instead.
-- [ ] `rollout undo` appears to change nothing → it is only meaningful because images are
-      digest-pinned. With a floating tag, undo re-pulls whatever that tag points at today.
+- [ ] `make rollback` appears to change nothing → it is only meaningful because images are
+      digest-pinned. With a floating tag, a rollback re-pulls whatever that tag points at today.
 - [ ] The pod vanished and came back on its own → the node pool is **spot**, so preemption is normal
       and expected, and with `replicas: 1` it is a short full outage. Not a bug to fix — a tradeoff
       to accept, or to remove with a non-spot pool.

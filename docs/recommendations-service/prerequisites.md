@@ -1,6 +1,6 @@
 # Prerequisites and parameter reference — `recommendations-service`
 
-Everything that must be true **before** `kubectl apply -k k8s/recommendations-service` can
+Everything that must be true **before** `make apply SVC=recommendations` can
 produce a running pod, plus every parameter the deployment depends on and the one command that
 checks it.
 
@@ -9,8 +9,8 @@ is still open, it says so.
 
 **Verified:** 2026-10-30 against `vincent-mini-apps-project` / `vincent-cluster`.
 **Step-by-step deploy:** [deploy.md](./deploy.md). **When it breaks:**
-[troubleshooting.md](../troubleshooting.md). Field-by-field rationale for every manifest is §7
-below.
+[troubleshooting.md](../troubleshooting.md). Field-by-field rationale for every object the chart
+renders from `helm/values/recommendations.yaml` is §7 below.
 
 Source repository: `../recommendations-be` (module
 `github.com/nguyentanvinh/recommendations-be/backend`).
@@ -262,7 +262,7 @@ process runs.
 
 `google_oauth_redirect_url` is the fourth required value and is **not** an environment variable —
 it comes from the embedded `production.yaml` (`http://localhost:9999/api/auth/google/callback`)
-via `//go:embed`. It is non-empty, so it passes. Nothing can override it from the manifest, which
+via `//go:embed`. It is non-empty, so it passes. Nothing can override it from the values file, which
 is fine while no callback ever arrives.
 
 **`ENCRYPTION_KEY` constraints.** `secret.NewBox` requires base64 that decodes to **exactly 32
@@ -271,7 +271,7 @@ that check never runs here and only the non-empty test applies. Generate a corre
 with `openssl rand -base64 32`: it costs nothing and the day a route starts sealing values, a
 placeholder would fail at request time instead of boot time.
 
-The Secret is deliberately absent from `kustomization.yaml` so no credential enters this repo.
+The Secret is deliberately absent from the chart and its values so no credential enters this repo.
 
 ### 6.2 The `gm_places` table must already exist
 
@@ -308,7 +308,7 @@ request 500s. `GET /api/v1/places` is the only real test.
 
 ### Least privilege, deferred
 
-The manifests authenticate as `postgres`, the instance superuser shared with auth-service. A
+The service authenticates as `postgres`, the instance superuser shared with auth-service. A
 dedicated `recommendations_app` user with rights on this database only is the least-privilege
 version, and it stops a password rotation from taking down the other service:
 
@@ -317,14 +317,14 @@ gcloud sql users create recommendations_app \
   --instance=recommendations-app-instance --prompt-for-password
 ```
 
-Then set `DB_USER` in `configmap.yaml`, grant it rights on `gm_places`, and put the new password
+Then set `config.DB_USER` in `helm/values/recommendations.yaml`, grant it rights on `gm_places`, and put the new password
 in the Secret.
 
 ---
 
 ## 7. Every deployment parameter
 
-### 7.1 Cross-file invariants — what YAML cannot check for you
+### 7.1 Cross-object invariants — what YAML cannot check for you
 
 | # | Must agree | Current | Symptom if broken |
 | --- | --- | --- | --- |
@@ -346,12 +346,15 @@ Invariant 7 is specific to this service. `config.go` does
 convenience" in the ConfigMap would bypass `DB_HOST=127.0.0.1` and send the app straight past its
 own sidecar.
 
-### 7.2 `configmap.yaml` — non-secret environment
+### 7.2 ConfigMap — non-secret environment
+
+`config:` in `helm/values/recommendations.yaml`, plus the shared keys from the chart's
+`values.yaml`. `PORT` is rendered from `containerPort`.
 
 | Key | Value | Note |
 | --- | --- | --- |
 | `APP_ENV` | `production` | selects the embedded `production.yaml`; echoed by `/api/v1/health` as `env`, which makes it the one externally observable proof the right config loaded |
-| `PORT` | `9998` | **invariant 1.** Settles a three-way disagreement: `production.yaml` says `server.port: 5001`, the Dockerfile `EXPOSE`s `4000`, `.env` says `:9998`. `config.go` applies `PORT` last and strips a leading `:`, so the manifest wins. 9998 matches the app's own convention (`BASE_URL` default, swagger `@host`) |
+| `PORT` | `9998` | **invariant 1.** Settles a three-way disagreement: `production.yaml` says `server.port: 5001`, the Dockerfile `EXPOSE`s `4000`, `.env` says `:9998`. `config.go` applies `PORT` last and strips a leading `:`, so the values file wins. 9998 matches the app's own convention (`BASE_URL` default, swagger `@host`) |
 | `DB_HOST` | `127.0.0.1` | the sidecar, **not** Cloud SQL |
 | `DB_PORT` | `5432` | **invariant 2** |
 | `DB_USER` | `postgres` | instance superuser — see §6.2 |
@@ -362,16 +365,15 @@ own sidecar.
 | `FRONTEND_URL` | `http://localhost:5173` | placeholder, and **functional**: `middleware/cors.go` passes it straight into `AllowedOrigins` as the single allowed browser origin |
 | *(omitted)* `SESSION_TTL`, `SESSION_IDLE_TTL`, `ENCRYPTION_KEY_VERSION`, `GOOGLE_ALLOWED_HD` | — | defaulted by `config.go` (12h / 30m / 1 / any) and unused by any route here |
 
-**`envFrom` has no name hash.** There is no `configMapGenerator`, so editing this file does
-**not** roll the Deployment — a running pod keeps the old environment until something restarts
-it. After a ConfigMap-only change you must
-`kubectl -n recommendations rollout restart deploy/recommendations-service`.
+**A config change rolls the pods by itself.** The pod template carries a `checksum/config`
+annotation of the ConfigMap's data, so `make apply` after a `config:` edit starts a rollout — no
+manual restart.
 
 **CORS is not a probe problem.** `rs/cors` only enforces `AllowedOrigins` on requests that carry
 an `Origin` header. Kubelet sends none, so all three probes pass through untouched; `curl`
 likewise. Only a browser on an origin other than `FRONTEND_URL` is blocked.
 
-### 7.3 `deployment.yaml` — top level and strategy
+### 7.3 Deployment — top level and strategy
 
 | Field | Value | Why |
 | --- | --- | --- |
@@ -447,7 +449,7 @@ flip side is §6.2 — a green probe says nothing about whether the table exists
 > `/api/v1/` is registered as a second alias for the same handler, if you ever want a probe path
 > without the `/health` suffix.
 
-### 7.7 `service.yaml`
+### 7.7 Service
 
 | Field | Value | Why |
 | --- | --- | --- |
@@ -457,7 +459,7 @@ flip side is §6.2 — a green probe says nothing about whether the table exists
 | `port` | `80` | in-cluster |
 | `targetPort` | `http` | invariant 4 — **by name**, which is why a container port change needs no edit here |
 
-### 7.8 `ingress.yaml`
+### 7.8 Ingress
 
 Host `recommendations-be.vincentn.dev` on the reserved global address
 `recommendations-service-ip`, TLS from `recommendations-service-origin-tls` (a **copy** of the
@@ -466,10 +468,14 @@ an Ingress can only reference Services in its own namespace, and a global addres
 one forwarding rule, so neither the Ingress nor the IP can be shared with `auth`. Full reasoning
 in [edge-architecture.md](../edge-architecture.md).
 
-### 7.9 `kustomization.yaml`
+### 7.9 Labels
 
-| Field | Value | Note |
+| Where | Labels | Note |
 | --- | --- | --- |
+| `selector.matchLabels`, pod labels | `app: recommendations-service` only | **Immutable after creation.** The chart keeps the selector exactly as it was before Helm, so adopting the live Deployment doesn't need replacing it |
+| Every object's metadata | `app.kubernetes.io/name`, `part-of`, `instance`, `managed-by`, `helm.sh/chart` | metadata only — never added to the selector |
+
+--- | --- | --- |
 | `namespace` | `recommendations` | applied to every resource |
 | `resources` | namespace, SA, configmap, deployment, service | **no Secret** — created imperatively |
 | `labels[].includeSelectors` | `false` | important: `true` would inject these labels into the immutable `selector.matchLabels`, making future label changes a Deployment-replacing operation |
@@ -498,13 +504,11 @@ gcloud artifacts docker images describe \
   --format='value(image_summary.digest)'
 
 # what will actually be sent, before sending it
-kubectl kustomize k8s/recommendations-service \
+helm template recommendations-service helm/mini-app-service -n recommendations \
+  -f helm/values/recommendations.yaml \
   | grep -E 'containerPort|targetPort|PORT:|maxUnavailable|DATABASE_URL'
+make diff SVC=recommendations
 ```
-
-Use `kubectl kustomize` (client-side render), not `kubectl apply --dry-run=server`: server-side
-dry-run never persists the Namespace, so every namespaced object in the bundle fails with
-`namespaces "recommendations" not found`. That is an artifact of the dry run, not a manifest bug.
 
 ---
 
@@ -516,7 +520,7 @@ dry-run never persists the Namespace, so every namespaced object in the bundle f
 - [ ] GSA `recommendations-sql` exists with `roles/cloudsql.client` (§4 link 3)
 - [ ] `workloadIdentityUser` binds `[recommendations/recommendations-service]` (§4 link 4)
 - [ ] `recommendations-repository` exists in `asia-southeast1`
-- [ ] A `linux/amd64` image is pushed, and its digest is pinned in `deployment.yaml`
+- [ ] A `linux/amd64` image is pushed, and its digest is pinned in `helm/values/recommendations.yaml`
 - [ ] `recommendations-service-secrets` holds all four keys
 - [ ] `gm_places` exists in `recommendations-backend` (§6.2)
 - [ ] All seven invariants in §7.1 hold

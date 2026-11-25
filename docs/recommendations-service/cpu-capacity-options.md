@@ -123,7 +123,7 @@ on node 1 permanently — too small for anything that would realistically be dep
 The one argument for it is surviving a node loss, which matters more than usual here because
 `minimal-pool` is a **spot** pool and preemption is routine, not hypothetical. But that argument
 does not currently hold: with `replicas: 1` there is no second copy to survive on the other node,
-and nothing spreads the two services across nodes. It would be paying for resilience the manifests
+and nothing spreads the two services across nodes. It would be paying for resilience the deployment
 are not configured to use. See the spot caveat in
 [prerequisites.md §3.2](./prerequisites.md#32-blocker-the-node-has-no-room-for-this-pod).
 
@@ -150,8 +150,9 @@ This is the right destination and the wrong thing to do mid-deploy.
 
 ### Shrink requests — lower the pod's CPU requests
 
-In `k8s/recommendations-service/deployment.yaml`: app `100m → 50m` (line 104), proxy `50m → 25m` (line 62). Total 75m,
-which fits in the 87m free with 12m to spare. Free, instant, one `kubectl apply`.
+App `100m → 50m`, proxy `50m → 25m` — now the chart defaults (`resources` and
+`cloudSqlProxy.resources` in `helm/mini-app-service/values.yaml`), which recommendations doesn't
+override. Total 75m, which fits in the 87m free with 12m to spare. Free, instant, one `make apply`.
 
 **What it genuinely is:** a paper change. It lowers the *reservation*, not what the app can consume
 — the 500m limit is untouched, so on a near-idle dev cluster the practical risk is close to zero.
@@ -176,11 +177,12 @@ one.
 **Step 2 — Scale up to `e2-standard-2`, then restore the original requests.** Done deliberately,
 with the `GKE_METADATA` flag checked and `auth-service`'s downtime planned rather than discovered.
 
-With ~1227m free afterwards, also revisit two things the current manifests only settled for because
+With ~1227m free afterwards, also revisit two things the current values only settled for because
 the node was full:
 
-- `maxUnavailable: 1` / `maxSurge: 0` at `deployment.yaml:22-23`. Two copies of the pod finally fit,
-  so this can return to `maxUnavailable: 0` / `maxSurge: 1` and give zero-downtime rollouts. The
-  comment in the manifest already says to do this "once the node pool has room".
-- `replicas: 1` at `deployment.yaml:11`, plus a `topologySpreadConstraint` — the point at which
+- `maxUnavailable: 1` / `maxSurge: 0`, the chart's default `strategy`. Two copies of the pod finally
+  fit, so `helm/values/recommendations.yaml` can override it to `maxUnavailable: 0` / `maxSurge: 1`
+  for zero-downtime rollouts, as league already does. The chart's comment says the same: override
+  to 0/1 "only where the node has room for a surge".
+- `replicas: 1` (chart default), plus a `topologySpreadConstraint` — the point at which
   surviving a spot preemption stops being theoretical.

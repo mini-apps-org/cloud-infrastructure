@@ -1,7 +1,8 @@
 # league-service — prerequisites
 
-`k8s/league-service/` is **reserved config**: the manifests are complete and `kustomize`-valid,
-but nothing they reference exists in GCP yet. This page is the checklist that closes that gap.
+Everything that had to exist in GCP before league's first deploy. **Done:** league is live on Helm
+(release `league-service`, `helm/values/league.yaml`). Keep this page for rebuilding the cluster
+or setting up a similar service.
 
 Parameter values live in one place for all three services:
 [../gke-parameters.md](../gke-parameters.md).
@@ -28,7 +29,7 @@ leaving 14m against this pod's 75m. On a node of its own the same 75m fits with 
 
 **The rollout strategy is the opposite of the other two.** They pin `maxUnavailable: 1` /
 `maxSurge: 0` because two copies of a pod cannot fit on the shared node, which makes
-`maxUnavailable: 0` a deadlock. Here the surge replica fits, so `deployment.yaml` uses
+`maxUnavailable: 0` a deadlock. Here the surge replica fits, so `helm/values/league.yaml` sets
 `maxUnavailable: 0` / `maxSurge: 1` and a rollout has no gap in service. Do not "fix" this
 inconsistency — the two clusters genuinely want different values.
 
@@ -141,10 +142,10 @@ gcloud sql databases create league-backend --instance league-app-instance
 No authorized network and no VPC peering is needed, and the separate cluster changes nothing
 here: `cloud-sql-proxy` reaches the instance over its public IP using the Cloud SQL Admin API and
 the `roles/cloudsql.client` grant, from wherever it happens to run. That is also why the instance
-being dedicated costs the manifest exactly one changed line — the connection name in
-`deployment.yaml`.
+being dedicated costs the values file exactly one changed line — `cloudSqlProxy.instance` in
+`helm/values/league.yaml`.
 
-Keep `deployment.yaml`'s connection name and this instance in step:
+Keep `cloudSqlProxy.instance` and this instance in step:
 `vincent-mini-apps-project:asia-southeast1:league-app-instance`.
 
 ---
@@ -169,7 +170,7 @@ whether a route uses them — so placeholders are required, not optional.
 **Store `ENCRYPTION_KEY` in a password manager the moment you generate it.** It seals the
 `oauth_tx` cookie; changing it invalidates every live session and there is no fallback key.
 
-Not in `kustomization.yaml`, deliberately — no credential lands in this repo.
+Not in the chart or its values, deliberately — no credential lands in this repo.
 
 ## 5. The TLS secret — a new certificate, not a copy
 
@@ -233,7 +234,7 @@ kubectl get nodes                 # one Ready node
 is an error rather than a deploy into the shared cluster.
 
 ```bash
-kubectl apply -k k8s/league-service     # or: make apply SVC=league
+make apply SVC=league                   # helm upgrade --install, waits for the rollout
 make status SVC=league
 make health SVC=league                  # {"ok":true,"env":"production","image":"0.1.2"}
 ```

@@ -1,15 +1,15 @@
 # Prerequisites and parameter reference — `auth-service`
 
-Everything that must be true **before** `kubectl apply -k k8s/auth-service` can produce a
+Everything that must be true **before** `make apply SVC=auth` can produce a
 running pod, plus every parameter the deployment depends on and the one command that checks it.
 
 Each row carries a value that was verified against the live project, not copied from a plan.
 Where a value is still open, it says so.
 
 **Verified:** 2026-10-29 against `vincent-mini-apps-project` / `vincent-cluster`.
-**Step-by-step deploy:** [deploy.md](./deploy.md). **Field-by-field rationale:**
-[manifest-reference.md](./manifest-reference.md). **Upstream citations:**
-[parameters.md](./parameters.md).
+**Step-by-step deploy:** [deploy.md](./deploy.md). **Values:** `helm/values/auth.yaml`, on top
+of the chart defaults in `helm/mini-app-service/values.yaml`. §7 describes the objects the chart
+renders from them.
 
 ---
 
@@ -125,7 +125,7 @@ Two consequences that have already bitten this deployment:
    config, but the reason is now that `league-cluster` and its dependencies do not exist yet,
    not CPU.
 2. **A rollout cannot run two copies of the pod at once.** This is why
-   `deployment.yaml` sets `maxUnavailable: 1` / `maxSurge: 0`. With the more usual
+   the chart's default `strategy` is `maxUnavailable: 1` / `maxSurge: 0`. With the more usual
    `maxUnavailable: 0` / `maxSurge: 1`, the old pod cannot be removed until the new one is
    Ready, and the new one cannot be *scheduled* until the old one is removed — the rollout
    deadlocks with the new pod `Pending` on `Insufficient cpu` and the autoscaler reporting
@@ -197,7 +197,7 @@ kubectl -n kube-system get pods -l k8s-app=gke-metadata-server -o wide
 | --- | --- | --- |
 | Instance | `recommendations-app-instance` | — |
 | Version / tier | `POSTGRES_18` / `db-perf-optimized-N-8` | — |
-| Connection name | `vincent-mini-apps-project:asia-southeast1:recommendations-app-instance` | `deployment.yaml` proxy arg (last positional) |
+| Connection name | `vincent-mini-apps-project:asia-southeast1:recommendations-app-instance` | `cloudSqlProxy.instance` in `helm/values/auth.yaml` |
 | Public IP | `34.142.199.254` | laptop-side migrations only |
 | Private IP | **none** | — |
 | Databases present | `postgres`, `recommendations-backend` | see §6.2 |
@@ -221,7 +221,7 @@ when reading its metrics.
 
 | Object | Requirement | State |
 | --- | --- | --- |
-| Namespace `auth` | created by `kustomization.yaml`, but the Secret needs it first | ✅ |
+| Namespace `auth` | created by hand, not by the chart — the Secret needs it first | ✅ |
 | Secret `auth-service-secrets` | **all four keys**, created imperatively | ✅ |
 
 ```bash
@@ -234,7 +234,7 @@ kubectl -n auth get secret auth-service-secrets \
 value is a CrashLoopBackOff — and a *missing Secret* is `CreateContainerConfigError`, which looks
 different and is easy to misread.
 
-The Secret is deliberately absent from `kustomization.yaml` so no credential enters this repo.
+The Secret is deliberately absent from the chart and its values so no credential enters this repo.
 
 **`ENCRYPTION_KEY` constraints:**
 
@@ -247,7 +247,7 @@ The Secret is deliberately absent from `kustomization.yaml` so no credential ent
 
 ❌ **The one real gap, and it is quiet:**
 
-- `configmap.yaml` sets `DB_NAME: "recommendations-backend"`.
+- `helm/values/auth.yaml` sets `config.DB_NAME: "recommendations-backend"`.
 - The instance has **no `auth_service` database** — only `postgres` and
   `recommendations-backend`.
 - The auth migration `db/migrations/00001_init.sql` in `../auth-be` targets `auth_service`.
@@ -262,12 +262,12 @@ Decide one of these before calling the deployment done:
 | Option | What to do |
 | --- | --- |
 | **A — share one database** (matches the current ConfigMap) | run the migration into `recommendations-backend`; auth tables live alongside the recommendations tables |
-| **B — separate database** (matches the migration) | `gcloud sql databases create auth_service --instance=recommendations-app-instance`, migrate into it, then set `DB_NAME: "auth_service"` in `configmap.yaml` |
+| **B — separate database** (matches the migration) | `gcloud sql databases create auth_service --instance=recommendations-app-instance`, migrate into it, then set `config.DB_NAME: "auth_service"` in `helm/values/auth.yaml` |
 
 Option B is cleaner — separate schemas, separate blast radius, and it matches what the Go repo
 already expects. Both are covered in [deploy.md §2](./deploy.md).
 
-While you are there: the manifests authenticate as `postgres`, the instance superuser shared
+While you are there: the service authenticates as `postgres`, the instance superuser shared
 with `recommendations-backend`. A dedicated `auth_app` user with rights on only the auth
 database is the least-privilege version, and it avoids a password rotation taking down the other
 service.
@@ -276,7 +276,7 @@ service.
 
 ## 7. Every deployment parameter
 
-### 7.1 Cross-file invariants — what YAML cannot check for you
+### 7.1 Cross-object invariants — what YAML cannot check for you
 
 | # | Must agree | Current | Symptom if broken |
 | --- | --- | --- | --- |
@@ -291,7 +291,10 @@ Invariant 1 is worth understanding rather than memorising: `containerPort` is **
 in Kubernetes — it neither binds nor restricts anything. The process binds whatever `PORT` says.
 So a mismatch does not fail as a bind error; it fails as a probe that can never pass.
 
-### 7.2 `configmap.yaml` — non-secret environment
+### 7.2 ConfigMap — non-secret environment
+
+`config:` in `helm/values/auth.yaml`, plus the shared keys from the chart's `values.yaml`.
+`PORT` is rendered from `containerPort`.
 
 | Key | Value | Note |
 | --- | --- | --- |
@@ -307,11 +310,11 @@ So a mismatch does not fail as a bind error; it fails as a probe that can never 
 | `SESSION_TTL` | `12h` | absolute session lifetime |
 | `SESSION_IDLE_TTL` | `30m` | idle timeout |
 
-**`envFrom` has no name hash.** There is no `configMapGenerator`, so editing this file does
-**not** roll the Deployment — a running pod keeps the old environment until something restarts
-it. After a ConfigMap-only change you must `kubectl -n auth rollout restart deploy/auth-service`.
+**A config change rolls the pods by itself.** The pod template carries a `checksum/config`
+annotation of the ConfigMap's data, so `make apply` after a `config:` edit starts a rollout — no
+manual restart.
 
-### 7.3 `deployment.yaml` — top level and strategy
+### 7.3 Deployment — top level and strategy
 
 | Field | Value | Why |
 | --- | --- | --- |
@@ -356,7 +359,7 @@ say `The proxy has started successfully`.
 
 | Field | Value | Why |
 | --- | --- | --- |
-| `image` | `…/auth-service:0.1.2@sha256:3d8abe72…` | **tag *and* digest.** The digest resolves; the tag documents. A moved tag makes `kubectl rollout undo` meaningless |
+| `image` | `…/auth-service:0.1.2@sha256:3d8abe72…` | **tag *and* digest.** The digest resolves; the tag documents. A moved tag makes `make rollback` meaningless |
 | `imagePullPolicy` | `IfNotPresent` | correct *because* of the digest pin — a digest cannot change meaning, so re-pulling buys nothing |
 | `ports[].name` | `http` | invariant 4. Named so the Service and all three probes reference `http`, never a number — which is why changing the port is a one-line edit |
 | `ports[].containerPort` | `9999` | invariant 1. Informational only |
@@ -380,7 +383,7 @@ All three target `port: http` by **name**, and all three hit `/api/v1/health`.
 the handler deliberately does **not** touch the database — so one slow query cannot evict a
 healthy pod. The flip side is §6.2: a green probe says nothing about whether the schema exists.
 
-### 7.7 `service.yaml`
+### 7.7 Service
 
 | Field | Value | Why |
 | --- | --- | --- |
@@ -390,7 +393,7 @@ healthy pod. The flip side is §6.2: a green probe says nothing about whether th
 | `port` | `80` | in-cluster |
 | `targetPort` | `http` | invariant 4 — **by name**, which is why a container port change needs no edit here |
 
-### 7.8 `ingress.yaml`
+### 7.8 Ingress
 
 | Field | Value | Why |
 | --- | --- | --- |
@@ -403,10 +406,14 @@ healthy pod. The flip side is §6.2: a green probe says nothing about whether th
 Public address: `kubectl -n auth get ingress auth-service`. How the whole edge fits together is in
 [edge-architecture.md](../edge-architecture.md).
 
-### 7.9 `kustomization.yaml`
+### 7.9 Labels
 
-| Field | Value | Note |
+| Where | Labels | Note |
 | --- | --- | --- |
+| `selector.matchLabels`, pod labels | `app: auth-service` only | **Immutable after creation.** The chart keeps the selector exactly as it was before Helm, so adopting the live Deployment doesn't need replacing it |
+| Every object's metadata | `app.kubernetes.io/name`, `part-of`, `instance`, `managed-by`, `helm.sh/chart` | metadata only — never added to the selector |
+
+--- | --- | --- |
 | `namespace` | `auth` | applied to every resource |
 | `resources` | namespace, SA, configmap, deployment, service, ingress | **no Secret** — created imperatively |
 | `labels[].includeSelectors` | `false` | important: `true` would inject these labels into the immutable `selector.matchLabels`, making future label changes a Deployment-replacing operation |
@@ -416,7 +423,7 @@ Public address: `kubectl -n auth get ingress auth-service`. How the whole edge f
 ## 8. Preflight — run before every apply
 
 Cheap, and it is the only thing standing between you and applying manifests to whatever cluster
-your kubeconfig last pointed at:
+your kubeconfig last pointed at (`make` also checks the context itself):
 
 ```bash
 # identity: both halves, because they fail independently
@@ -433,7 +440,9 @@ kubectl -n auth get secret auth-service-secrets \
   -o go-template='{{range $k,$v := .data}}{{$k}}{{"\n"}}{{end}}'
 
 # what will actually be sent, before sending it
-kubectl kustomize k8s/auth-service | grep -E 'containerPort|targetPort|PORT:|maxUnavailable'
+helm template auth-service helm/mini-app-service -n auth -f helm/values/auth.yaml \
+  | grep -E 'containerPort|targetPort|PORT:|maxUnavailable'
+make diff SVC=auth
 ```
 
 ---

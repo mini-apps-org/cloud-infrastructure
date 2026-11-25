@@ -14,7 +14,7 @@ actually run.
 | --- | --- |
 | **Goal** | `2/2 Running`, `database connected`, health 200 |
 | **Time** | ~10 min from here (step 2 is most of it) |
-| **Image** | whatever digest `deployment.yaml` pins (currently `0.1.2`) |
+| **Image** | whatever digest `helm/values/auth.yaml` pins (currently `0.1.2`) |
 | **Destructive** | no, as long as you skip step 1 (it recreates the node pool) |
 
 > ### This deploy does not prove login works
@@ -88,7 +88,7 @@ gcloud projects add-iam-policy-binding "$P" \
   --member="serviceAccount:${GSA}" --role="roles/cloudsql.client"
 
 # KSA -> GSA: the pod may act as that identity.
-# "auth" is the namespace, "auth-service" the KSA — both from k8s/auth-service/.
+# "auth" is the namespace, "auth-service" the KSA (= the Helm release name).
 gcloud iam service-accounts add-iam-policy-binding "$GSA" \
   --role="roles/iam.workloadIdentityUser" \
   --member="serviceAccount:${P}.svc.id.goog[auth/auth-service]"
@@ -126,10 +126,11 @@ Matches what the Go repo expects, and keeps the two services' schemas apart.
 gcloud sql databases create auth_service --instance=recommendations-app-instance
 ```
 
-Then set `DB_NAME` in `k8s/auth-service/configmap.yaml`:
+Then set `DB_NAME` under `config:` in `helm/values/auth.yaml`:
 
 ```yaml
-DB_NAME: "auth_service"
+config:
+  DB_NAME: "auth_service"
 ```
 
 ### Option A — share `recommendations-backend`
@@ -154,7 +155,7 @@ gcloud sql users set-password postgres \
 > gcloud sql users create auth_app \
 >   --instance=recommendations-app-instance --prompt-for-password
 > ```
-> then set `DB_USER: "auth_app"` in `configmap.yaml`, grant it rights on the auth database, and
+> then set `DB_USER: "auth_app"` under `config:` in `helm/values/auth.yaml`, grant it rights on the auth database, and
 > update `DB_PASSWORD` in the Secret (step 3).
 
 ### 2c. Run the migration
@@ -210,7 +211,7 @@ All four must be listed. `config.Load()` errors on any empty one and `main.go` t
 <summary>Expand: creating it from scratch, and the ENCRYPTION_KEY rules</summary>
 
 ```bash
-kubectl apply -f k8s/auth-service/namespace.yaml
+kubectl create namespace auth --dry-run=client -o yaml | kubectl apply -f -
 
 kubectl -n auth create secret generic auth-service-secrets \
   --from-literal=DB_PASSWORD='<the postgres password from step 2b>' \
@@ -232,7 +233,8 @@ kubectl -n auth create secret generic auth-service-secrets \
 kubectl -n auth rollout restart deploy/auth-service
 ```
 
-The Secret is deliberately absent from `kustomization.yaml` so no credential enters this repo.
+The Secret is deliberately absent from the chart and `helm/values/auth.yaml` so no credential
+enters this repo.
 
 </details>
 
@@ -240,39 +242,38 @@ The Secret is deliberately absent from `kustomization.yaml` so no credential ent
 
 ## Step 4 — Apply
 
-```bash
-# dry read: see exactly what will be sent
-kubectl kustomize k8s/auth-service
+**First time on Helm?** `auth` was originally deployed with `kubectl apply -k`. If
+`helm -n auth list` shows no `auth-service` release, adopt the live objects first —
+[helm-migration.md §3.4](../helm-migration.md) — or `make apply` fails on objects Helm doesn't own.
 
-# sanity-check the invariants in that output before sending it
-kubectl kustomize k8s/auth-service | grep -E 'containerPort|targetPort|PORT:|maxUnavailable'
+```bash
+# preview against the live cluster
+make diff SVC=auth
+
+# sanity-check the invariants in the rendered output before sending it
+helm template auth-service helm/mini-app-service -n auth -f helm/values/auth.yaml \
+  | grep -E 'containerPort|targetPort|PORT:|maxUnavailable'
 # want: PORT: "9999" / containerPort: 9999 / targetPort: http / maxUnavailable: 1
 
-kubectl apply -k k8s/auth-service
-kubectl -n auth rollout status deploy/auth-service --timeout=5m
+make apply SVC=auth             # helm upgrade --install, waits for the rollout
 ```
 
-### If you changed only `configmap.yaml`
-
-There is no `configMapGenerator`, so the ConfigMap has no name hash and editing it does **not**
-roll the Deployment — the running pod keeps the old environment. This is required:
-
-```bash
-kubectl -n auth rollout restart deploy/auth-service
-```
+A change to `config:` alone rolls the pods too: the chart's `checksum/config` annotation changes
+with the ConfigMap's data, so no manual restart is needed.
 
 ### What gets applied
 
-| File | Role |
+| Template | Role |
 | --- | --- |
-| `namespace.yaml` | namespace `auth` |
-| `service-account.yml` | KSA `auth-service`, annotated with the `auth-sql` GSA — the Workload Identity link |
-| `configmap.yaml` | non-secret env: `APP_ENV`, `PORT=9999`, `DB_*`, URLs, session TTLs |
+| `serviceaccount.yaml` | KSA `auth-service`, annotated with the `auth-sql` GSA (`gcpServiceAccount`) — the Workload Identity link |
+| `configmap.yaml` | non-secret env: `APP_ENV`, `PORT=9999`, `DB_*`, URLs, session TTLs (`config:`) |
 | `deployment.yaml` | app container + `cloud-sql-proxy` **native sidecar** |
 | `service.yaml` | `ClusterIP` :80 → :9999 (by port name `http`), NEG-annotated |
 | `ingress.yaml` | `gce` Ingress: `auth.vincentn.dev`, global static IP, Origin CA TLS |
 
-Four parameters in `deployment.yaml` each prevent a specific, already-observed failure:
+The namespace is not in the chart: it's created in step 3, before the Secret that needs it.
+
+Four parameters in the chart's `deployment.yaml` each prevent a specific, already-observed failure:
 
 1. **The proxy is a native sidecar** (`initContainers` + `restartPolicy: Always`). The app pings
    the DB at boot and `log.Fatalf`s on failure; an ordinary sidecar starts *in parallel*, so the
@@ -281,9 +282,9 @@ Four parameters in `deployment.yaml` each prevent a specific, already-observed f
    Kubelet probes from outside the pod's network namespace and dials the pod IP, while the DB
    tunnel binds `127.0.0.1` only — a tcpSocket probe there can *never* pass. It killed this
    container every 60 seconds.
-3. **`maxUnavailable: 1` / `maxSurge: 0`.** Two copies of this pod do not fit on one
-   `e2-medium`; the usual `0`/`1` pair deadlocks the rollout with the new pod `Pending` on
-   `Insufficient cpu`.
+3. **`maxUnavailable: 1` / `maxSurge: 0`** (the chart default `strategy`). Two copies of this pod
+   do not fit on one `e2-medium`; the usual `0`/`1` pair deadlocks the rollout with the new pod
+   `Pending` on `Insufficient cpu`.
 4. **`runAsUser` is deliberately unset.** The distroless `:nonroot` base already sets numeric
    UID 65532, and that numeric form is what lets Kubernetes verify `runAsNonRoot`.
 
@@ -301,7 +302,7 @@ kubectl -n auth get rs \
   -o custom-columns='NAME:.metadata.name,REV:.metadata.annotations.deployment\.kubernetes\.io/revision,DESIRED:.spec.replicas,READY:.status.readyReplicas'
 ```
 
-`kubectl apply -k k8s/auth-service` with the current manifest resolves it on its own: the
+`make apply SVC=auth` with the current chart resolves it on its own: the
 strategy change lets the Deployment controller scale the old ReplicaSet to 0, which frees the
 150m of CPU the new pod is waiting for. No `rollout restart` needed — the pod template itself
 changed, so a new rollout triggers automatically.
@@ -386,18 +387,16 @@ kubectl -n auth exec deploy/auth-service -c cloud-sql-proxy -- \
 Once the above is green, day-to-day changes are:
 
 ```bash
-# manifest change
-kubectl apply -k k8s/auth-service
-kubectl -n auth rollout status deploy/auth-service
-
-# ConfigMap-only change — the restart is REQUIRED, see step 4
-kubectl apply -k k8s/auth-service
-kubectl -n auth rollout restart deploy/auth-service
-kubectl -n auth rollout status deploy/auth-service
+# values or chart change (config-only changes roll the pods by themselves)
+make diff  SVC=auth
+make apply SVC=auth
 
 # no change, just bounce it
-kubectl -n auth rollout restart deploy/auth-service
+make restart SVC=auth
 ```
+
+Once `auth` is on Helm, merging a change to `helm/values/auth.yaml` to `master` deploys it
+through `.github/workflows/deploy-auth.yaml`; `make apply` is for a laptop deploy or an emergency.
 
 ### Shipping a new image
 
@@ -405,7 +404,7 @@ kubectl -n auth rollout restart deploy/auth-service
 cd ../auth-be && make image-push TAG=0.0.2
 ```
 
-Then get the digest and pin **both** tag and digest in `deployment.yaml`, because
+Then get the digest and pin **both** tag and digest in `helm/values/auth.yaml`, because
 `imagePullPolicy: IfNotPresent` is only safe while the reference is immutable:
 
 ```bash
@@ -415,18 +414,21 @@ gcloud artifacts docker images describe \
 ```
 
 ```yaml
-image: asia-southeast1-docker.pkg.dev/.../auth-service:0.0.2@sha256:<digest>
+image:
+  tag: "0.0.2"
+  digest: sha256:<digest>
 ```
 
 ### Rolling back
 
 ```bash
-kubectl -n auth rollout history deploy/auth-service
-kubectl -n auth rollout undo deploy/auth-service
+make history  SVC=auth
+make rollback SVC=auth          # previous Helm revision, ConfigMap included
 ```
 
-This works *because* images are digest-pinned. With a floating tag, an undo would re-pull
-whatever that tag points at today and mean nothing.
+This works *because* images are digest-pinned. With a floating tag, a rollback would re-pull
+whatever that tag points at today and mean nothing. Once CD deploys `auth`, follow a rollback
+with a `git revert` of the values change, or the next deploy re-applies it.
 
 ---
 

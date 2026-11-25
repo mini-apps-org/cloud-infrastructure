@@ -1,14 +1,14 @@
 # cloud-infrastructure
 
-Kubernetes manifests and deployment runbooks for the `my-mini-apps` services on GKE.
+Helm chart, per-service values and deployment runbooks for the `my-mini-apps` services on GKE.
 
 Covers three services across **two clusters**:
 
-| Service | Source | Cluster | Namespace | Manifests | Docs | State |
+| Service | Source | Cluster | Namespace | Values | Docs | State |
 | --- | --- | --- | --- | --- | --- | --- |
-| **`auth-service`** | `../auth-be` | `vincent-cluster` | `auth` | `k8s/auth-service/` | [docs/](docs/auth-service/prerequisites.md) | live on `https://auth.vincentn.dev` (Cloudflare + GCE Ingress) |
-| **`recommendations-service`** | `../recommendations-be` | `vincent-cluster` | `recommendations` | `k8s/recommendations-service/` | [docs/recommendations-service/](docs/recommendations-service/prerequisites.md) | live on `https://recommendations-be.vincentn.dev` (Cloudflare + GCE Ingress), `2/2 Running` |
-| **`league-service`** | `../../league/league-be` | `league-cluster` | `league` | `k8s/league-service/` | [docs/league-service/](docs/league-service/prerequisites.md) | **reserved — not deployed.** Manifests complete and `kustomize`-valid, targeting `https://be.mvip-league.com`; the cluster itself, plus the GSA, registry repo, image, static IP, Cloud SQL instance and Secrets, do not exist yet |
+| **`auth-service`** | `../auth-be` | `vincent-cluster` | `auth` | `helm/values/auth.yaml` | [docs/](docs/auth-service/prerequisites.md) | live on `https://auth.vincentn.dev` (Cloudflare + GCE Ingress) |
+| **`recommendations-service`** | `../recommendations-be` | `vincent-cluster` | `recommendations` | `helm/values/recommendations.yaml` | [docs/recommendations-service/](docs/recommendations-service/prerequisites.md) | live on `https://recommendations-be.vincentn.dev` (Cloudflare + GCE Ingress), `2/2 Running` |
+| **`league-service`** | `../../league/league-be` | `league-cluster` | `league` | `helm/values/league.yaml` | [docs/league-service/](docs/league-service/prerequisites.md) | live on `https://be.mvip-league.com` (Cloudflare + GCE Ingress), with Grafana at `monitoring.mvip-league.com` |
 
 `league-service` is deliberately on a cluster of its own rather than sharing `vincent-cluster`.
 That is what unblocks it — on the shared node there was 14m of CPU free against the 75m it needs
@@ -27,7 +27,7 @@ Shared across all three services — read these first:
 | **[gke-parameters.md](docs/gke-parameters.md)** | Every GKE parameter for all three services in one set of tables: project, **both clusters**, Cloud SQL, identity, networking, resources, probes, sidecar, env. Start here. |
 | **[troubleshooting.md](docs/troubleshooting.md)** | Every failure mode, in the order a deploy hits them. Organised by the error in front of you. |
 | **[edge-architecture.md](docs/edge-architecture.md)** | How Cloudflare + GCE Ingress + TLS fit together, and how to put a new service behind the edge. |
-| **[helm-migration.md](docs/helm-migration.md)** | Step-by-step move from `k8s/` (Kustomize) to the shared `helm/mini-app-service` chart, adopting live objects without recreating them. |
+| **[helm-migration.md](docs/helm-migration.md)** | Adopting a live, `kubectl`-applied service into the shared `helm/mini-app-service` chart without recreating it. **Still to do for `auth` and `recommendations`** (§3.4). |
 | **[deployment-workflow-context.md](deployment-workflow-context.md)** | Target CI/CD: backend repos only build images; a merged values change here deploys. Access prerequisites, workflows, rollout plan. |
 
 Standalone, and not specific to this repo — safe to share or read on its own:
@@ -40,16 +40,16 @@ Per service:
 
 | Service | Documents |
 | --- | --- |
-| `auth-service` | [prerequisites.md](docs/auth-service/prerequisites.md) (state, parameters, **open issues**) · [deploy.md](docs/auth-service/deploy.md) · [manifest-reference.md](docs/auth-service/manifest-reference.md) (field-by-field rationale) · [parameters.md](docs/auth-service/parameters.md) (upstream citations) |
+| `auth-service` | [prerequisites.md](docs/auth-service/prerequisites.md) (state, parameters, **open issues**) · [deploy.md](docs/auth-service/deploy.md) |
 | `recommendations-service` | [prerequisites.md](docs/recommendations-service/prerequisites.md) · [deploy.md](docs/recommendations-service/deploy.md) · [cpu-capacity-options.md](docs/recommendations-service/cpu-capacity-options.md) |
-| `league-service` | [prerequisites.md](docs/league-service/prerequisites.md) — the 14-item checklist before a first apply, starting with creating the cluster |
+| `league-service` | [prerequisites.md](docs/league-service/prerequisites.md) — the 14-item checklist before a first apply · [grafana.md](docs/league-service/grafana.md) · [grafana-public-access.md](docs/league-service/grafana-public-access.md) · [grafana-loki.md](docs/league-service/grafana-loki.md) · [cloud-logging.md](docs/league-service/cloud-logging.md) |
 
 ### What is still open
 
 | | |
 | --- | --- |
 | **`vincent-cluster` node CPU** | 926m of 940m requested (98%). Nothing else schedules there. No longer blocks `league-service`, which moved to its own cluster, but it still means the two live services cannot roll without a brief gap. |
-| **`league-cluster`** | Not created yet. Everything else in `league-service`'s 14-item checklist is downstream of it. The command to create it is [league-service/prerequisites.md §2](docs/league-service/prerequisites.md#2-the-cluster); what each flag does is [cluster-creation.md](docs/cluster-creation.md). |
+| **Helm adoption** | `auth` and `recommendations` are still `kubectl`-applied objects with no Helm release, so `make apply` and the deploy workflow can't manage them yet. Adopt each one with [helm-migration.md §3.4](docs/helm-migration.md). |
 | **`FRONTEND_URL`** | Still `http://localhost:5173` on all three. It is both the post-login redirect target and the only allowed CORS origin, so every browser XHR fails until it is right. |
 | **Google login** | One open blocker in `auth-be`: the `__Host-oauth_tx` cookie sets `Path=/api/v1/auth/google`, which the `__Host-` prefix forbids, so browsers discard it silently. [Details](docs/auth-service/prerequisites.md#open-issues). |
 | **Schemas** | A green `/api/v1/health` never touches the database on any service. Whether the auth schema and `gm_places` exist where `DB_NAME` points is still unverified. |
@@ -62,63 +62,54 @@ Per service:
 | --- | --- |
 | Project | `vincent-mini-apps-project` (gcloud configuration **`personal`**) — one project, both clusters |
 | Cluster · auth + recommendations | `vincent-cluster`, zonal `asia-southeast1-a`. Node pool `minimal-pool` — 1× `e2-medium`, **spot**, no taints |
-| Cluster · league | `league-cluster`, zonal `asia-southeast1-a`, node pool `default-pool` — same shape. **Not created yet**; needs `--workload-pool` at create time |
+| Cluster · league | `league-cluster`, zonal `asia-southeast1-a`, node pool `default-pool` — same shape, Workload Identity enabled |
 | Cloud SQL · auth + recommendations | `recommendations-app-instance`, POSTGRES_18, `db-perf-optimized-N-8`, public IP `34.142.199.254`, database `recommendations-backend` — shared. No `auth_service` database exists; see [prerequisites.md §6.2](docs/auth-service/prerequisites.md#62-open-the-auth-schema-has-nowhere-to-live-yet) |
-| Cloud SQL · league | `league-app-instance`, POSTGRES_18, database `league-backend` — **not created yet**. Its own instance, not a second database on the shared one |
-| Registry | `asia-southeast1-docker.pkg.dev/vincent-mini-apps-project/<svc>-repository/<svc>-service` — `auth-repository` and `recommendations-repository` exist; `league-repository` **not yet created**. Project-scoped, so both clusters pull from it |
-| Public hosts | `auth.vincentn.dev` · `recommendations-be.vincentn.dev` (zone `vincentn.dev`) · `be.mvip-league.com` (reserved, **its own zone and its own Origin certificate**) — all behind Cloudflare, see [edge-architecture.md](docs/edge-architecture.md) |
+| Cloud SQL · league | `league-app-instance`, POSTGRES_18, database `league-backend`. Its own instance, not a second database on the shared one |
+| Registry | `asia-southeast1-docker.pkg.dev/vincent-mini-apps-project/<svc>-repository/<svc>-service` — `auth-repository`, `recommendations-repository` and `league-repository`. Project-scoped, so both clusters pull from it |
+| Public hosts | `auth.vincentn.dev` · `recommendations-be.vincentn.dev` (zone `vincentn.dev`) · `be.mvip-league.com` (**its own zone and its own Origin certificate**) — all behind Cloudflare, see [edge-architecture.md](docs/edge-architecture.md) |
 
 ---
 
 ## Layout
 
 ```
-k8s/
-  auth-service/
-    kustomization.yaml   entry point: kubectl apply -k k8s/auth-service
-    namespace.yaml       namespace "auth"
-    service-account.yml  KSA + Workload Identity annotation (auth-sql GSA)
-    configmap.yaml       non-secret env (APP_ENV, PORT=9999, DB_*, URLs, TTLs)
-    deployment.yaml      app container + cloud-sql-proxy native sidecar
-    service.yaml         ClusterIP :80 -> :9999, NEG-annotated
-    ingress.yaml         gce Ingress: auth.vincentn.dev, global IP, Origin CA TLS
-  recommendations-service/
-    ... same seven files, namespace "recommendations", PORT=9998,
-        recommendations-sql GSA
-  league-service/
-    ... same seven files, namespace "league", PORT=9200,
-        league-sql GSA -- reserved, see docs/league-service/
+helm/
+  mini-app-service/      the one chart all three services deploy from
+    values.yaml          defaults shared by every service
+    templates/           serviceaccount, configmap, deployment (app + cloud-sql-proxy
+                         native sidecar), service (ClusterIP, NEG), ingress (gce,
+                         Origin CA TLS), podmonitoring (opt-in)
+  values/
+    auth.yaml            namespace "auth", PORT=9999, auth-sql GSA
+    recommendations.yaml namespace "recommendations", PORT=9998, recommendations-sql GSA
+    league.yaml          namespace "league", PORT=9200, league-sql GSA
+  monitoring/            Grafana, cloudflared and Alloy on league-cluster
 docs/
   gke-parameters.md      every GKE parameter, all three services, one set of tables
   cluster-creation.md    basic GKE cluster setup with gcloud (generic, shareable)
   troubleshooting.md     every failure mode, all three services
   edge-architecture.md   Cloudflare + GCE Ingress + TLS, and how to add a service
-  auth-service/          prerequisites (incl. open issues) + deploy + 2 references
+  helm-migration.md      adopting a kubectl-applied service into the chart
+  auth-service/          prerequisites (incl. open issues) + deploy
   recommendations-service/
                          prerequisites + deploy + cpu-capacity-options
-  league-service/        prerequisites (what must exist before the first apply)
+  league-service/        prerequisites + Grafana, Loki and Cloud Logging guides
 ```
 
 Anything shared by more than one service lives at the top of `docs/`, not duplicated per
-service — the three cross-service files above replaced six per-service ones.
+service.
 
-One folder per service under both `k8s/` and `docs/`, with the same file names in each — so a
-path tells you the service and the role, and neither tree needs a prefix convention to stay
-readable as services are added.
-
-Plain YAML + Kustomize, not Helm. Three services across two clusters still don't justify
-templating, and the indirection would obscure exactly the details that matter while this is being
-brought up — the duplication between the three `deployment.yaml` files is the thing to watch, and
-the signal to revisit. The second cluster makes that argument slightly stronger, not weaker: two
-clusters is where per-environment values usually start multiplying. At that point a Helm + Argo CD
-shape becomes the right answer.
+One chart, one values file per service: what differs between services is exactly what is in
+`helm/values/<svc>.yaml`, and a change to probes, the proxy or the securityContext is made once
+in the chart. Before the chart, the three services were near-identical plain YAML that had to be
+edited in three places; the last commit with that tree is `1f2535c`.
 
 ### Secrets are not in this repo
 
 `auth-service-secrets` (`DB_PASSWORD`, `GOOGLE_OAUTH_CLIENT_ID`,
 `GOOGLE_OAUTH_CLIENT_SECRET`, `ENCRYPTION_KEY`) is created imperatively with
 `kubectl create secret` in [deploy.md step 3](docs/auth-service/deploy.md) and is deliberately absent from
-`kustomization.yaml`.
+the chart and its values files.
 
 **`ENCRYPTION_KEY` seals live session cookies — store it in a password manager the moment you
 generate it.** Changing it logs every user out, and nothing in the code reads a fallback key.
@@ -145,9 +136,11 @@ gcloud container clusters get-credentials league-cluster  --zone asia-southeast1
 # rail rather than something to remember:
 make status SVC=league            # -> "SVC=league expects cluster league-cluster"
 
-# deploy / update
-kubectl apply -k k8s/auth-service
-kubectl -n auth rollout status deploy/auth-service
+# deploy / update -- helm upgrade --install, waits for the rollout. auth and
+# recommendations must be adopted into Helm first (docs/helm-migration.md §3.4)
+make diff  SVC=auth                                         # preview against the live cluster
+make apply SVC=auth
+make rollback SVC=auth                                      # previous Helm revision, ConfigMap included
 
 # is it healthy
 kubectl -n auth get pods                                    # want 2/2 Running
@@ -156,7 +149,8 @@ kubectl -n auth logs deploy/auth-service -c auth-service    # want "database con
 # reach it
 make health SVC=auth                                        # {"ok":true,"env":"production"}
 
-# ship a new image -- CI builds on a git tag matching *.*.*, then pin the digest
+# ship a new image -- CI builds on a git tag matching *.*.*; then set image.tag +
+# image.digest in helm/values/auth.yaml and merge: the deploy workflow applies it
 cd ../auth-be && git tag 0.1.3 && git push origin 0.1.3
 ```
 
@@ -182,8 +176,8 @@ cd ../auth-be && git tag 0.1.3 && git push origin 0.1.3
   scale, worth knowing when you read the instance's metrics. `league` gets its own instance —
   which is also a second Cloud SQL bill, so do not clone the shared instance's
   `db-perf-optimized-N-8` tier for it.
-- **No deploy CI.** Images are built by CI in each service repo (a git tag matching `*.*.*`
-  triggers a push to Artifact Registry), but applying manifests and pinning the new digest is
-  manual `kubectl apply`. Natural next step.
-- **Digests are pinned by hand.** That is what makes `kubectl rollout undo` meaningful, and also
+- **Deploy CI needs Helm ownership.** A merged change to `helm/values/<svc>.yaml` deploys that
+  service (`.github/workflows/deploy-*.yaml`). For `auth` and `recommendations` that only works
+  once they are adopted into Helm — [helm-migration.md §3.4](docs/helm-migration.md).
+- **Digests are pinned by hand.** That is what makes `make rollback` meaningful, and also
   what makes a redeploy a two-step job — bump the tag, then paste the digest.

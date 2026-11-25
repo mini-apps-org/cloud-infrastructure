@@ -8,7 +8,7 @@ image, no Secret — and the cluster has no room for the pod. Steps 1–5 are al
 
 **Prerequisites and every parameter:** [prerequisites.md](./prerequisites.md).
 **When something breaks:** [troubleshooting.md](../troubleshooting.md).
-**Field-by-field manifest rationale:** [prerequisites.md §7](./prerequisites.md#7-every-deployment-parameter).
+**Field-by-field parameter rationale:** [prerequisites.md §7](./prerequisites.md#7-every-deployment-parameter).
 
 | | |
 | --- | --- |
@@ -96,8 +96,8 @@ gcloud projects add-iam-policy-binding "$P" \
   --role="roles/cloudsql.client"
 
 # KSA -> GSA: this pod may act as that identity.
-# "recommendations" is the namespace, "recommendations-service" the KSA --
-# both from k8s/recommendations-service/.
+# "recommendations" is the namespace, "recommendations-service" the KSA
+# (= the Helm release name).
 gcloud iam service-accounts add-iam-policy-binding "$GSA" \
   --role="roles/iam.workloadIdentityUser" \
   --member="serviceAccount:${P}.svc.id.goog[recommendations/recommendations-service]"
@@ -185,7 +185,7 @@ image:
 ```
 
 `auth-be` tags by commit SHA by default rather than `:latest` — a mutable tag makes a rollout
-non-deterministic and `kubectl rollout undo` meaningless.
+non-deterministic and `make rollback` meaningless.
 
 </details>
 
@@ -194,10 +194,10 @@ non-deterministic and `kubectl rollout undo` meaningless.
 ## Step 5 — Secret
 
 The namespace must exist first, because the Secret is created imperatively and is deliberately
-**not** in `kustomization.yaml` — that is what keeps credentials out of this repo.
+**not** in the chart or its values — that is what keeps credentials out of this repo.
 
 ```bash
-kubectl apply -f k8s/recommendations-service/namespace.yaml
+kubectl create namespace recommendations --dry-run=client -o yaml | kubectl apply -f -
 
 kubectl -n recommendations create secret generic recommendations-service-secrets \
   --from-literal=DB_PASSWORD='<the postgres password for recommendations-app-instance>' \
@@ -250,67 +250,63 @@ superuser. A dedicated `recommendations_app` user avoids that; see
 
 ## Step 6 — Pin the image digest
 
-The manifest ships with a tag-only reference because no image existed when it was written. Now
-one does, so pin it — `imagePullPolicy: IfNotPresent` is only safe while the reference cannot
-change meaning:
+`imagePullPolicy: IfNotPresent` is only safe while the image reference cannot change meaning, so
+the values file pins a digest as well as the tag:
 
 ```bash
 gcloud artifacts docker images describe \
-  asia-southeast1-docker.pkg.dev/vincent-mini-apps-project/recommendations-repository/recommendations-service:0.0.1 \
+  asia-southeast1-docker.pkg.dev/vincent-mini-apps-project/recommendations-repository/recommendations-service:<tag> \
   --format='value(image_summary.digest)'
 ```
 
-Then edit `k8s/recommendations-service/deployment.yaml`, keeping **both** tag and digest — the
-digest resolves, the tag documents:
+Set **both** in `helm/values/recommendations.yaml` — the digest resolves, the tag documents:
 
 ```yaml
-image: asia-southeast1-docker.pkg.dev/.../recommendations-service:0.0.1@sha256:<digest>
+image:
+  tag: "<tag>"
+  digest: sha256:<digest>
 ```
 
-Without this, a re-pushed `0.0.1` plus `IfNotPresent` means some pods run old bytes and
-`kubectl rollout undo` means nothing — undo would re-pull whatever the tag points at today.
+Without the digest, a re-pushed tag plus `IfNotPresent` means some pods run old bytes and
+`make rollback` means nothing — it would re-pull whatever the tag points at today.
 
 ---
 
 ## Step 7 — Apply
 
-```bash
-# dry read: see exactly what will be sent
-kubectl kustomize k8s/recommendations-service
+**First time on Helm?** `recommendations` was originally deployed with `kubectl apply -k`. If
+`helm -n recommendations list` shows no `recommendations-service` release, adopt the live objects
+first — [helm-migration.md §3.4](../helm-migration.md) — or `make apply` fails on objects Helm
+doesn't own.
 
-# sanity-check the invariants in that output before sending it
-kubectl kustomize k8s/recommendations-service \
+```bash
+# preview against the live cluster
+make diff SVC=recommendations
+
+# sanity-check the invariants in the rendered output before sending it
+helm template recommendations-service helm/mini-app-service -n recommendations \
+  -f helm/values/recommendations.yaml \
   | grep -E 'containerPort|targetPort|PORT:|maxUnavailable|DATABASE_URL'
 # want: PORT: "9998" / containerPort: 9998 / targetPort: http / maxUnavailable: 1
 # and NO DATABASE_URL line at all (invariant 7)
 
-kubectl apply -k k8s/recommendations-service
-kubectl -n recommendations rollout status deploy/recommendations-service --timeout=5m
+make apply SVC=recommendations      # helm upgrade --install, waits for the rollout
 ```
 
-Use `kubectl kustomize`, not `kubectl apply --dry-run=server`: server-side dry-run never persists
-the Namespace, so every namespaced object fails with `namespaces "recommendations" not found`.
-That is an artifact of the dry run, not a manifest bug.
-
-### If you changed only `configmap.yaml`
-
-There is no `configMapGenerator`, so the ConfigMap has no name hash and editing it does **not**
-roll the Deployment — the running pod keeps the old environment. This is required:
-
-```bash
-kubectl -n recommendations rollout restart deploy/recommendations-service
-```
+A change to `config:` alone rolls the pods too: the chart's `checksum/config` annotation changes
+with the ConfigMap's data, so no manual restart is needed.
 
 ### What gets applied
 
-| File | Role |
+| Template | Role |
 | --- | --- |
-| `namespace.yaml` | namespace `recommendations` |
-| `service-account.yml` | KSA `recommendations-service`, annotated with the `recommendations-sql` GSA — the Workload Identity link |
-| `configmap.yaml` | non-secret env: `APP_ENV`, `PORT=9998`, `DB_*`, URLs |
+| `serviceaccount.yaml` | KSA `recommendations-service`, annotated with the `recommendations-sql` GSA (`gcpServiceAccount`) — the Workload Identity link |
+| `configmap.yaml` | non-secret env: `APP_ENV`, `PORT=9998`, `DB_*`, URLs (`config:`) |
 | `deployment.yaml` | app container + `cloud-sql-proxy` **native sidecar** |
 | `service.yaml` | `ClusterIP` :80 → :9998 (by port name `http`), NEG-annotated |
 | `ingress.yaml` | `gce` Ingress: `recommendations-be.vincentn.dev`, global static IP, Origin CA TLS |
+
+The namespace is not in the chart: it's created in step 5, before the Secret that needs it.
 
 Five parameters each prevent a specific failure, four of them already observed on auth-service:
 
@@ -414,18 +410,16 @@ directory that is not in the repo — so whatever created that table lives elsew
 ## Routine redeploy
 
 ```bash
-# manifest change
-kubectl apply -k k8s/recommendations-service
-kubectl -n recommendations rollout status deploy/recommendations-service
-
-# ConfigMap-only change -- the restart is REQUIRED, see step 7
-kubectl apply -k k8s/recommendations-service
-kubectl -n recommendations rollout restart deploy/recommendations-service
-kubectl -n recommendations rollout status deploy/recommendations-service
+# values or chart change (config-only changes roll the pods by themselves)
+make diff  SVC=recommendations
+make apply SVC=recommendations
 
 # no change, just bounce it
-kubectl -n recommendations rollout restart deploy/recommendations-service
+make restart SVC=recommendations
 ```
+
+Once `recommendations` is on Helm, merging a change to `helm/values/recommendations.yaml` to
+`master` deploys it through `.github/workflows/deploy-recommendations.yaml`.
 
 ### Shipping a new image
 
@@ -436,17 +430,17 @@ docker buildx build --platform linux/amd64 --target runtime -t $AR_IMAGE:0.0.2 -
 gcloud artifacts docker images describe $AR_IMAGE:0.0.2 --format='value(image_summary.digest)'
 ```
 
-Then pin **both** tag and digest in `deployment.yaml` and apply. Never move a tag that is already
-deployed.
+Then pin **both** `image.tag` and `image.digest` in `helm/values/recommendations.yaml` and apply.
+Never move a tag that is already deployed.
 
 ### Rolling back
 
 ```bash
-kubectl -n recommendations rollout history deploy/recommendations-service
-kubectl -n recommendations rollout undo deploy/recommendations-service
+make history  SVC=recommendations
+make rollback SVC=recommendations   # previous Helm revision, ConfigMap included
 ```
 
-This works *because* images are digest-pinned. With a floating tag, an undo would re-pull
+This works *because* images are digest-pinned. With a floating tag, a rollback would re-pull
 whatever that tag points at today and mean nothing.
 
 ---
@@ -456,7 +450,7 @@ whatever that tag points at today and mean nothing.
 - [ ] Node pool has 2 nodes and ≥150m CPU free where the pod landed
 - [ ] GSA `recommendations-sql` exists; both IAM bindings verified
 - [ ] `recommendations-repository` exists in `asia-southeast1`
-- [ ] Image built with `--platform linux/amd64`, pushed, **digest pinned** in `deployment.yaml`
+- [ ] Image built with `--platform linux/amd64`, pushed, **digest pinned** in `helm/values/recommendations.yaml`
 - [ ] Secret has all four keys; `ENCRYPTION_KEY` stored outside the cluster
 - [ ] Exactly **one** pod, `2/2 Running`, `0` restarts
 - [ ] Proxy logs show `ready for new connections`, with no `SIGTERM` after it
