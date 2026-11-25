@@ -1,3 +1,16 @@
+# 2026-11-25
+
+- feat(monitoring): ship league's logs to Grafana Cloud Loki with Alloy, queryable in Grafana as `league-loki`
+- refactor(make): `make health` always goes through the public `HEALTH_URL` — the LoadBalancer-IP fallback is gone
+- docs: rewrite the auth and recommendations deploy guides for Helm (`make diff` / `apply` / `rollback`)
+- docs: remove `manifest-reference.md` and `parameters.md`, which described the deleted `k8s/` files
+- docs: track which services still need Helm adoption in `helm-migration.md`
+- docs: add guides for querying league's logs in Cloud Logging and in Loki
+
+# 2026-11-23
+
+- feat(league): deploy tag `0.9.0`
+
 # 2026-11-20
 
 - [PR4](https://github.com/mini-apps-org/cloud-infrastructure/pull/4)
@@ -10,6 +23,7 @@
   - feat(helm): optional `metricsPort` serves `/metrics` on its own port, out of reach of the Ingress
   - feat(league): turn on metrics scraping for league-service
   - feat(monitoring): Grafana on `league-cluster`, public at `monitoring.mvip-league.com` behind Cloudflare Access
+  - feat(monitoring): query league's logs in Grafana from Cloud Logging, read as the `grafana-logs-reader` service account
   - docs: add Grafana setup and public-access guides for league
 - feat(league): deploy tag `0.7.0`
 
