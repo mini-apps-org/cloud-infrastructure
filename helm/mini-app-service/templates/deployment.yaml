@@ -24,9 +24,8 @@ spec:
       labels:
         {{- include "mini-app-service.selectorLabels" . | nindent 8 }}
       annotations:
-        # Rolls the pods whenever the ConfigMap's data changes. Kustomize had no
-        # configMapGenerator hash, which is why `make apply-config` needed an
-        # explicit restart; this replaces it. Hashes .data only: the metadata
+        # Rolls the pods whenever the ConfigMap's data changes, so a config-only
+        # change needs no explicit restart. Hashes .data only: the metadata
         # carries helm.sh/chart, so hashing the whole object would roll every
         # service on a mere chart version bump.
         checksum/config: {{ (include (print $.Template.BasePath "/configmap.yaml") . | fromYaml).data | toYaml | sha256sum }}

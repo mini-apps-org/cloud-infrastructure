@@ -107,20 +107,13 @@ logs-proxy: check-context ## Tail the cloud-sql-proxy sidecar
 events: check-context ## Pod events -- read this first on a failure
 	@$(KNS) describe pod -l app=$(DEPLOY) | sed -n '/^Events/,$$p'
 
-# All three services are ClusterIP behind their own Ingress now, so there is no
-# LoadBalancer IP to read. The fallback below stays for any service that still
-# has one.
+# All three services are ClusterIP behind their own Ingress, so health goes
+# through the public host.
 HEALTH_URL_auth            := https://auth.vincentn.dev
 HEALTH_URL_recommendations := https://recommendations-be.vincentn.dev
 HEALTH_URL_league          := https://be.mvip-league.com
 HEALTH_URL ?= $(HEALTH_URL_$(SVC))
 
 .PHONY: health
-health: ## curl /api/v1/health (HEALTH_URL, else the LoadBalancer IP)
-	@base='$(HEALTH_URL)'; \
-	if [ -z "$$base" ]; then \
-	  ip=$$($(KNS) get svc $(DEPLOY) -o jsonpath='{.status.loadBalancer.ingress[0].ip}'); \
-	  [ -n "$$ip" ] || { echo "no LoadBalancer IP and no HEALTH_URL for SVC=$(SVC)" >&2; exit 1; }; \
-	  base="http://$$ip"; \
-	fi; \
-	curl -fsS "$$base/api/v1/health"; printf '\n'
+health: ## curl /api/v1/health on HEALTH_URL
+	@curl -fsS '$(HEALTH_URL)/api/v1/health'; printf '\n'
