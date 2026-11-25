@@ -2,7 +2,8 @@
 
 Step-by-step setup of Grafana on `league-cluster`: league's metrics from Google Managed
 Prometheus (GMP), league's logs from Cloud Logging, and a dashboard. To open it from the
-internet, continue with [grafana-public-access.md](grafana-public-access.md).
+internet, continue with [grafana-public-access.md](grafana-public-access.md). To query logs with
+LogQL as well, see [grafana-loki.md](grafana-loki.md).
 
 ```mermaid
 flowchart LR
@@ -186,6 +187,9 @@ Add a line to narrow it:
 | One request | `jsonPayload.request_id="<id>"` |
 | One endpoint | `jsonPayload.path="/api/v1/me"` |
 | Text anywhere | `"no session cookie"` |
+
+Full guide — log fields, the filter language, `gcloud`, following one request:
+[cloud-logging.md](cloud-logging.md).
 
 ---
 
